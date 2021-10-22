@@ -29,4 +29,4 @@ Everything was handled in an as permissive and kind a manner as I could, as I wa
 
 I still need to generate an autograder script, which should be fairly simple to do. This will require some collaboration to determine what constitutes an ineligible answer (won't count as wrong, but won't count as right) and what constitutes a wrong answer. While I don't expect anyone to be reading this before I get this done, on the off chance that anyone is - please don't bother building this and providing it to me. At this point, I've done all of this myself and I'd like to finish it off myself as well. 
 
-That said, I'm all for improvements to my existing script. Feel free to reach out via Twitter at @HasekBowsToMe if you have a question about your entry, or email at TownsendSignUp on Gmail if you have more broad questions or concerns. 
+That said, I'm all for improvements to my existing script. Feel free to reach out via [Twitter at @HasekBowsToMe](https://twitter.com/hasekbowstome) if you have a question about your entry, or email at TownsendSignUp on Gmail if you have more broad questions or concerns. 
