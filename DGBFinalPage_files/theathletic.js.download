@@ -1,0 +1,2090 @@
+if (typeof require !== 'undefined' && !window.$) {
+  window.$ = require("jquery")
+}
+
+var compassClient;
+var regwall_copy_experiment_treatment;
+var slideup_paywall_treatment;
+var paywallSlideupAnimationComplete = false;
+var force_web_checkout = false;
+var source;
+var is_propensity_paywall = false;
+var has_article_view_been_logged = false;
+
+var countryCodeMapping = {
+  'br': 'ROW1', 'hk': 'ROW1', 'hu': 'ROW1', 'id': 'ROW1', 'in': 'ROW1', 'jp': 'ROW1',
+  'ke': 'ROW1', 'mx': 'ROW1', 'ph': 'ROW1', 'pl': 'ROW1', 'ru': 'ROW1', 'sa': 'ROW1',
+  'tr': 'ROW1', 'tw': 'ROW1', 'ug': 'ROW1',
+  'cz': 'ROW2', 'kr': 'ROW2', 'ng': 'ROW2', 'nz': 'ROW2', 'pr': 'ROW2',
+  'sg': 'ROW2', 'th': 'ROW2', 'za': 'ROW2',
+};
+var validCountryCodes = ['AU', 'MY', 'US', 'CA', 'GB', 'ROW1', 'ROW2'];
+
+var checkout_ctas = ['#league-page-checkout-button','#promo-feed-banner-checkout', '#header-v3-checkout', '#floating-paywall-checkout'];
+
+function get_country_code_or_row_group(countryCode) {
+  if (countryCodeMapping[countryCode] == 'ROW1' || countryCodeMapping[countryCode] == 'ROW2') {
+    countryCode = countryCodeMapping[countryCode];
+  } else if (countryCode == 'ie') {
+    countryCode = "GB";
+  } else if (countryCode == 'usvi' || countryCode == 'pr'){
+    countryCode = "US";
+  } else {
+    countryCode = countryCode.toUpperCase();
+  }
+
+  if (!validCountryCodes.includes(countryCode)) {
+    countryCode = 'ROW3';
+  }
+
+  return countryCode;
+}
+
+function initCountry() {
+  return $.ajax({
+    url: "https://www.cloudflare.com/cdn-cgi/trace",
+    type: 'GET'
+  });
+}
+
+try {
+  initCountry().then(result => {
+    $(document).ready(function () {
+      preparePaywallOnDocumentReady(result);
+    });
+  })
+} catch(error) {
+  console.log(error);
+  $(document).ready(function () {
+    preparePaywallOnDocumentReady();
+  });
+};
+
+function usPerfPaywallPaid(paywall) {
+  paywall["vanity_code"] = "introannual50";
+  paywall["checkout_url"] = "/checkout2/" + paywall["vanity_code"];
+  paywall["href"] = paywall["checkout_url"] + "?";
+  paywall["header"] = "<div class='font-48-42-27'>Save 50% on all access to The Athletic.</div>" ;
+  paywall["button_text"] = "Get Offer";
+  paywall["body"] = "Exclusive stories. Expert analysis. Ad-free.";
+  paywall["subheader"] = "LIMITED TIME OFFER";
+}
+
+function isFalse(flag) {
+  if (!flag) {
+    return true;
+  }
+  return flag == "false";
+}
+
+function preparePaywallOnDocumentReady(cloudflareCountryResult = null) {
+  var url = new URL(window.location.href);
+  var countryCodeExpression = /loc=([\w]{2})/;
+  var countryCodeOverride = url.searchParams.get("country-code");
+  var countryCode = countryCodeOverride ? countryCodeOverride : (cloudflareCountryResult != null ?
+    countryCodeExpression.exec(cloudflareCountryResult)[1].toLowerCase() : null);
+  var is_ROW_group_a = countryCodeMapping[countryCode] == 'ROW1';
+  var is_ROW_group_b = countryCodeMapping[countryCode] == 'ROW2';
+
+  // Check for various pre-defined url params
+  var domain = url.host;
+  var ref_page = url.searchParams.get("ref_page");
+  source = url.searchParams.get("source");
+  var sticky_pc = url.searchParams.get("sticky_pc");
+  var sticky_discount = url.searchParams.get("sticky_discount");
+  var sticky_trial = url.searchParams.get("sticky_trial");
+  var pc_from_url = url.searchParams.get("pc");
+  var shared_by = url.searchParams.get("shared_by");
+  var ref = url.searchParams.get("ref");
+  var mobile = is_mobile();
+  var locale = navigator.language ? navigator.language.toLowerCase() : null;
+  var country_code = countryCode || (locale ? locale.slice(-2) : null);
+  var gb_ie_country_code = country_code == 'gb' || country_code == 'ie';
+  var ca_country_code = country_code == 'ca';
+  var us_country_code = country_code == 'us';
+  var my_country_code = country_code == 'my';
+  var au_country_code = country_code == 'au';
+  var is_other_ROW_country = !gb_ie_country_code && !ca_country_code && !us_country_code &&
+    !my_country_code && !au_country_code && !is_ROW_group_a && !is_ROW_group_b;
+  var logged_in_sub = Cookies.get("ath_sub");
+  var smart_link = "https://theathletic.smart.link/b6cil6ant";
+  var ad_id = url.searchParams.get("ad_id");
+  var hide_cookie_ack = url.searchParams.get("hide_checkout_links"); // Piggyback param for mobile apps
+  var campaign = url.searchParams.get("campaign");
+
+  // Longest possible cookie expiration currently is 2038
+  var long_cookie_expiration_date = 365 * 20;
+
+  if(window.cta_paywall){
+    get_paywall_rules(get_country_code_or_row_group(countryCode), source);
+  }
+  // TODO: remove the below after we're sure no-one coming back to the site has these cookies
+  enforce_cookie_length_limit("ath_sources_all", 5);
+  enforce_cookie_length_limit("all_ad_ids_clicked", 5);
+  enforce_cookie_length_limit("all_ad_ids_clicktimes", 5);
+  enforce_cookie_length_limit("ath_anonymous_articles_read", 5);
+  enforce_cookie_length_limit("ath_free_article_dump", 5);
+  enforce_cookie_length_limit("ath_paywalled_article_dump", 5);
+
+  // If the User comes from Keywee FB ad, force a web checkout
+  if (
+    [
+      "fbmwebads",
+      "ggmwebads",
+      "keyweefbadsbc",
+      "perfmktgmwebads",
+      "twmwebads",
+    ].includes(source)
+  ) {
+    force_web_checkout = true;
+  }
+  if (
+    !(
+      Cookies.get("cookie-policy-optout") &&
+      Cookies.get("cookie-policy-optout").includes("tracking")
+    )
+  ) {
+    add_twitter_pixel();
+  }
+
+  var session_id = Cookies.get("ath_anonymous_user_id");
+  // All users get a session id
+  if (!session_id) {
+    // Construct new session id based on current time millis + random number
+    session_id =
+      new Date().getTime() + "" + Math.floor(Math.random() * 999999);
+    Cookies.set("ath_anonymous_user_id", session_id, {
+      expires: long_cookie_expiration_date,
+    });
+  }
+
+  if ($(".regwall-floating-ui-content").length > 0) {
+    track_analytics_avro(
+      'view',
+      'subscribe_banner',
+      "",
+      "article_id",
+      window.article_id,
+      source,
+      {
+        "is_mobile_web": is_mobile() ? "1" : "0",
+        "locale": locale
+      }
+    );
+
+    $(".regwall-floating-ui-content a").on('click', function(){
+      track_analytics_avro(
+        'click',
+        'subscribe_banner',
+        "",
+        "article_id",
+        window.article_id,
+        source,
+        {
+          "is_mobile_web": is_mobile() ? "1" : "0",
+          "locale": locale
+        }
+      );
+    });
+  }
+
+  compassClient = new CompassClient();
+
+  function getNavCTAColorByVariant (variant) {
+    var variantToColorMap = {
+      'A': 'white', 'B': 'red', 'C': 'blue', 'CTRL': 'black'
+    }
+    return variantToColorMap[variant];
+  }
+
+  function runCompassExperimentForSubscribeNavAndLogViewEvent() {
+    compassClient.getTreatmentForExperiment('CTA Color Experiment').then(treatment => {
+      compassClient.logExposure('CTA Color Experiment', treatment);
+
+      if (['A', 'B', 'C'].includes(treatment)) {
+        var navCTAColor = getNavCTAColorByVariant(treatment);
+        $(".subscribe-cta-exp").addClass(`${navCTAColor}-subscribe-button`);
+      }
+
+      $(".subscribe-cta-exp").removeClass("invisible");
+      $(".subscribe-cta-exp").on('click', function() { logSubscribeNavClick(treatment); });
+      logSubscribeNavView(treatment);
+    });
+  }
+
+  function logSubscribeNavClick(treatment) {
+    var meta_blob = {
+      "nav_cta": "Subscribe",
+      "nav_cta_color": getNavCTAColorByVariant(treatment),
+      "nav_cta_url": "/checkout2/introannual33?checkout_entry_point=universal_nav_CTA",
+      "referrer": window.location.href,
+    };
+
+    track_analytics_avro(
+      'click',
+      'universal_nav_CTA',
+      '',
+      '',
+      '',
+      source,
+      meta_blob
+    );
+  }
+
+  function logSubscribeNavView(treatment) {
+    var meta_blob = {
+      "nav_cta": "Subscribe",
+      "nav_cta_color": getNavCTAColorByVariant(treatment),
+      "nav_cta_url": "/checkout2/introannual33?checkout_entry_point=universal_nav_CTA",
+      "referrer": window.location.href,
+      "experiment_id": "Primary Nav CTA Color Test",
+      "variant": treatment
+    };
+
+    track_analytics_avro(
+      'view',
+      'universal_nav_CTA',
+      '',
+      '',
+      '',
+      source,
+      meta_blob
+    );
+  }
+
+  if (window.run_subscribe_nav_experiment) {
+    runCompassExperimentForSubscribeNavAndLogViewEvent();
+  }
+
+  function renderArticleLimitPaywall() {
+    $('.hh-login-link').removeClass("hidden");
+    $(".nse-login-button").hide();
+    $('.paywall-login-link').html('Log in to a different account.');
+
+    paywall["body"] = "You've reached your free article limit. Subscribe for all access to exclusive sports stories. ";
+    paywall["header"] = "<div class='font-48-42-27'>Subscribe for all access.</div>" ;
+    paywall["button_text"] = "Subscribe Now";
+    paywall["href"] = "/checkout2/intro1/hfintro6?";
+    paywall["template"] = "#slideup-paywall";
+
+    renderPaywall(paywall, false, false, locale);
+  }
+
+  // Try to set timezone from browser locale
+  var timezone_name = Cookies.get("timezone_name");
+  if (!timezone_name) {
+    try {
+      timezone_name = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch (err) {
+      timezone_name = "America/New_York";
+    }
+    Cookies.set("timezone_name", timezone_name, { expires: 365 });
+  }
+
+  // If sticky pc/trial/discount params are in url, save them to cookie
+  if (sticky_pc && sticky_trial && sticky_discount) {
+    var sticky_paywall = true;
+    Cookies.set("sticky_pc", sticky_pc, { expires: 1 });
+    Cookies.set("sticky_discount", sticky_discount, { expires: 1 });
+    Cookies.set("sticky_trial", sticky_trial, { expires: 1 });
+    Cookies.set("sticky_promo", "true", { expires: 1 });
+  }
+
+  // If promo code is set in url, save it to cookie
+  if (pc_from_url) {
+    Cookies.set("pc", pc_from_url, { expires: 30 });
+  }
+
+  if (ref) {
+    Cookies.set("ref", ref, { expires: 365 });
+  }
+
+  if (campaign) {
+    Cookies.set("campaign", campaign, { expires: 365 });
+  }
+
+  // if theres no source and the referrer is a whitelisted referrer, use it as the source
+  if (!source) {
+    var referrer = document.referrer;
+    if (referrer) {
+      if (referrer.indexOf("www.google.com") > -1) {
+        source = "googlesearch";
+      } else if (
+        referrer.indexOf("com.google.android.googlequicksearchbox") > -1
+      ) {
+        source = "googlequicksearchbox";
+      } else if (referrer.indexOf("www.googleapis.com") > -1) {
+        source = "googleapis";
+      } else if (referrer.indexOf("news.google.com") > -1) {
+        source = "googlenews";
+      } else if (referrer.indexOf("t.co") > -1) {
+        source = "twitterorganic";
+      } else if (referrer.indexOf("www.google.ca") > -1) {
+        source = "googlesearchcanada";
+      } else if (referrer.indexOf("www.google.co.uk") > -1) {
+        source = "googlesearchuk";
+      } else if (referrer.indexOf("reddit.com") > -1) {
+        source = "reddit";
+      } else if (referrer.indexOf("instagram.com") > -1) {
+        source = "instagramorganic";
+      } else if (referrer.indexOf("facebook.com") > -1) {
+        source = "facebookorganic";
+      }
+    }
+  }
+
+  // add the source to the URL in the article deeplink if the deeplink is on the page
+
+  if ($("#article-footer-deeplink").length > 0 && source) {
+    var _href = $("#article-footer-deeplink").attr("href");
+    $("#article-footer-deeplink").attr("href", _href + "?source=" + source);
+  }
+
+  if (source) {
+    var optOuts = Cookies.get("cookie-policy-optout");
+    if (optOuts == null) {
+      optOuts = "";
+    }
+
+    if (optOuts.includes("analytical")) {
+      var oldSource = Cookies.get("source");
+      if (oldSource !== source) {
+        $.ajax({
+          url: "/track-analytics/",
+          data: {
+            event_name: "source-changed",
+            key: source,
+            meta: {
+              old_source: oldSource,
+            },
+          },
+        });
+      }
+    }
+
+    Cookies.set("source", source, { expires: 365 });
+    if (source === "googlesearch") {
+      window.from_search = true;
+    }
+
+    if (!Cookies.get("source_orig")) {
+      Cookies.set("source_orig", source, { expires: 365 });
+    }
+  }
+
+  // if there is an ad_id in the url add it to the cookies
+  if (ad_id) {
+    var last_ad_id_clicktime = Math.round(new Date() / 1000);
+    Cookies.set("last_ad_id_clicktime", last_ad_id_clicktime, { expires: 365 });
+    Cookies.set("last_ad_id_clicked", ad_id, { expires: 365 });
+  }
+
+  // Change the Kochava smart link if the User arrived from a Google ad
+  var google_search_sources = [
+    "gmailads",
+    "googleads",
+    "googlediscoveryads",
+    "googledisplayads",
+    "googledsaads",
+    "googlesearchads",
+    "googleuac",
+    "googleuksearchads",
+    "googleyoutubeads",
+  ];
+  if (source && google_search_sources.indexOf(source) > -1) {
+    smart_link = "https://theathletic.smart.link/qtnbnlov5";
+  } else if (
+    source &&
+    source.indexOf("google") > -1 &&
+    source.indexOf("ad") > -1
+  ) {
+    smart_link = "https://theathletic.smart.link/qtnbnlov5";
+  }
+
+  // Change the Kochava smart link if the User arrived from a Facebook ad
+  if (source && source.indexOf("fb") > -1 && source.indexOf("ad") > -1) {
+    smart_link = "https://theathletic.smart.link/oa7pbc67q";
+  } else if (
+    source &&
+    source.indexOf("facebook") > -1 &&
+    source.indexOf("ad") > -1
+  ) {
+    smart_link = "https://theathletic.smart.link/oa7pbc67q";
+  }
+
+  // Change the Kochava smart link if the User arrived from a Snapchat ad
+  if (source && source.indexOf("snap") > -1 && source.indexOf("ad") > -1) {
+    smart_link = "https://theathletic.smart.link/9u7tbru8y";
+  }
+
+  // Change the Kochava smart link if the User arrived from a Twitter ad
+  if (source && source.indexOf("twitter") > -1 && source.indexOf("ad") > -1) {
+    smart_link = "https://theathletic.smart.link/e55x2twup";
+  }
+
+  // Show the cookie banner, depending on user's IP geolocation
+  $("body").prepend(cookie_notice_code);
+  var acked = Cookies.get("cookie-policy-accept");
+  if (!acked && !hide_cookie_ack) {
+    $.ajax({
+      url: "/ip",
+      dataType: "json",
+      success: function(data){
+        if(data && data.showCookieBannerOnLocation === "true") {
+          var $cookie_notice = $("#cookie-notice-v2");
+          if(data.useCCPA === "true") {
+            $cookie_notice.find(".gdpr").addClass('hide');
+            $cookie_notice.find(".ccpa").removeClass('hide');
+            $cookie_notice.show();
+          } else {
+            $cookie_notice.show();
+          }
+        }
+      },
+      timeout: 2500
+    });
+  }
+
+  if (!window.article_meta) {
+    // Non-article pages
+  } else {
+    // Article pages
+
+    if (Cookies.get("sticky_promo")) {
+      var sticky_paywall = true;
+      var sticky_pc = Cookies.get("sticky_pc");
+      var sticky_discount = Cookies.get("sticky_discount");
+      var sticky_trial = Cookies.get("sticky_trial");
+    }
+
+    if (sticky_pc) {
+      window.article_meta["coupon_code"] = sticky_pc;
+    }
+
+    // If promo code is set in url, save it to cookie and set on article_meta
+    if (pc_from_url) {
+      window.article_meta["coupon_code"] = pc_from_url;
+    }
+
+    if (ref_page) {
+      window.article_meta["ref_page"] = ref_page;
+    }
+
+    if (shared_by) {
+      Cookies.set("ath_referrer_user_id", shared_by, { expires: 365 });
+    }
+
+    if (source) {
+      window.article_meta["source"] = source;
+    }
+
+    // Keep track of last article viewed
+    if (window.article_id) {
+      Cookies.set("last_article_id", window.article_id, { expires: 365 });
+    }
+
+    if (window.article_meta["all_tagged_teams"]) {
+      Cookies.set("all_tagged_teams", window.article_meta["all_tagged_teams"], { expires: 365 });
+    }
+
+    if (window.article_meta["league_ids"]) {
+      Cookies.set("league_ids", window.article_meta["league_ids"], { expires: 365 });
+    }
+
+    if (!Cookies.get("_ath_orig_date")) {
+      Cookies.set("ath_last_article_seen_on", new Date().toISOString(), {
+        expires: 365,
+      });
+    }
+
+    // Set referrer on meta if present
+    if (document.referrer) {
+      window.article_meta["referrer"] = document.referrer.match(
+        /:\/\/(.[^/]+)/
+      )[1];
+      if (!Cookies.get("ath_orig_referrer_domain")) {
+        Cookies.set(
+          "ath_orig_referrer_domain",
+          window.article_meta["referrer"],
+          { expires: 365 }
+        );
+      }
+    }
+
+    var isUserLoggedIn = window.article_meta.user_id && window.article_meta.user_id != "0";
+
+    // Logic for anonymous users only
+    if (!isUserLoggedIn) {
+      // if the current session_id is not a number change it and log the old ones to events
+      if (session_id && !session_id.match(/^\d+$/)) {
+        old_session_id = session_id;
+        session_id =
+          new Date().getTime() + "" + Math.floor(Math.random() * 999999);
+        Cookies.set("ath_anonymous_user_id", session_id, {
+          expires: long_cookie_expiration_date,
+        });
+        track_analytics("session-id-change", "old_id", old_session_id);
+      }
+
+      // log last article seen
+      Cookies.set("ath_last_article_seen_on", new Date().toISOString(), {
+        expires: 365,
+      });
+    }
+
+    if (window.article_meta["has_paywall"] && !isFalse(window.article_meta["has_paywall"])) {
+      var ninety_day_test = false;
+
+      // show open in app link on all article pages
+      if (
+        mobile &&
+        document.getElementById("open-article-in-app-button") !== null
+      ) {
+        $("#open-article-in-app-button").show();
+      }
+
+      var show_app_paywall = false;
+
+      // Construct different paywalls based on various logic, tests, time of day, etc
+      var paywall = {};
+      var wall_type = "paywall";
+      const has_regwall_login_cookie = Cookies.get('login_source') === 'regwall';
+      if (
+        window.athletique &&
+        !show_app_paywall
+      ) {
+        // show default paywall for french users
+          paywall["header"] =
+            "Accès complet. <span class='nowrap'>Sans pub.</span>";
+          paywall["body"] =
+            "Toutes les histoires de sport qui comptent.";
+          paywall["button_text"] = "Abonnez-vous";
+          paywall["href"] = "/checkout/?plan_id=48";
+      } else if (window.show_regwall_article_limit_paywall && window.propensity_paywall && isUserLoggedIn && has_regwall_login_cookie) {
+        renderArticleLimitPaywall();
+      } else if (window.article_meta && window.article_meta["email_paywall"]) {
+        paywall["email_paywall"] = true;
+        show_app_paywall = false;
+      } else if (window.registration_paywall) {
+        show_app_paywall = false;
+        wait_for_paywall = false;
+      } else if (sticky_paywall) {
+        show_app_paywall = false;
+        wait_for_paywall = false;
+        paywall["discount"] = sticky_discount;
+        paywall["pc"] = sticky_pc;
+        paywall["plan"] = sticky_trial == "1" ? "429" : "428";
+        paywall["header"] = "SALE: Get " + paywall["discount"] + "% off";
+        paywall["body"] =
+          "Get access to this article and all the quality, in-depth coverage at The Athletic with this special offer! No ads, no clickbait - just smart, exclusive content from great sportswriters.";
+        paywall["button_text"] = "Get " + paywall["discount"] + "% off";
+        paywall["alt_button_text"] = "Get " + paywall["discount"] + "% off";
+        paywall["href"] =
+          build_href(paywall["plan"], paywall["pc"], pc_from_url) +
+          (source ? "&source=" + source : "");
+      } else if (!au_country_code && window.offer_independent_pricing_index && should_user_get_offer_independent_paywall()) {
+        $('.hh-login-link').removeClass("hidden");
+        $(".nse-login-button").hide();
+        window.article_meta["has_offer_independent_paywall"] = 1;
+
+        if (us_country_code || ca_country_code) {
+          build_us_canada_offer_independent_paywall(paywall);
+        } else {
+          build_uk_row_offer_independent_paywall(paywall);
+        }
+
+        renderPaywall(paywall, false, false, locale);
+      } else if (!au_country_code && window.offer_deal_fatigue && should_user_get_deal_fatigue_paywall()){
+        $('.hh-login-link').removeClass("hidden");
+        $(".nse-login-button").hide();
+        window.article_meta["has_deal_fatigue_paywall"] = 1;
+
+        if (us_country_code || ca_country_code) {
+          build_us_canada_deal_fatigue_paywall(paywall);
+        } else {
+          build_uk_row_deal_fatigue_paywall(paywall);
+        }
+        renderPaywall(paywall, false, false, locale);
+
+      } else if (my_country_code) {
+        $('.hh-login-link').removeClass("hidden");
+        $(".nse-login-button").hide();
+
+        if (window.paywall_tool_2021) {
+          usePaywallTool(countryCode, paywall, source, ad_id);
+        } else {
+          paywall["subheader"] = "LIMITED TIME OFFER";
+          paywall["header"] =
+          "<div class='font-48-42-27'>Read free for 60 days.</div>";
+          paywall["body"] =
+            "Get unlimited access to exclusive sports coverage. From European football to global basketball, get the sports stories that matter to you.";
+          paywall["button_text"] = "Start Free Trial";
+          paywall["href"] = "/checkout2/trialtwo?";
+          renderPaywall(paywall, false, false, locale);
+        }
+      } else if (window.performance_marketing_user_familiarity && is_paid_source(source)) {
+        $('.hh-login-link').removeClass("hidden");
+        $(".nse-login-button").hide();
+
+        if (window.paywall_tool_2021) {
+          usePaywallTool(countryCode, paywall, source, ad_id);
+        } else {
+          usPerfPaywallPaid(paywall);
+          renderPaywall(paywall, false, false, locale);
+        }
+      } else if (!is_paid_source(source)) {
+        $('.hh-login-link').removeClass("hidden");
+        $(".nse-login-button").hide();
+
+        if (window.paywall_tool_2021) {
+          usePaywallTool(countryCode, paywall, source, ad_id);
+        } else {
+          // defaults
+          var price = 3.99;
+          paywall["vanity_code"] = "intro1";
+          paywall["pc"] = "hfintro6";
+          paywall["header"] = "<div class='font-48-42-27'>Access all of The Athletic</div>" ;
+          paywall["button_text"] = "Subscribe";
+          paywall["subheader"] = "Limited Time Offer";
+
+          // ROW countries
+          if (is_ROW_group_a) {
+            price = 1.99;
+            paywall["vanity_code"] = "intropma";
+            paywall["pc"] = "hfintro6";
+          } else if (is_ROW_group_b) {
+            price = 2.99;
+            paywall["vanity_code"] = "intropmb";
+            paywall["pc"] = "hfintro6";
+          } else if (is_other_ROW_country) {
+            price = 3.99;
+            paywall["vanity_code"] = "intro1";
+            paywall["pc"] = "hfintro6";
+          }
+
+          paywall["checkout_url"] = "/checkout2/" + paywall["vanity_code"] +  "/" + paywall["pc"];
+          paywall["href"] = paywall["checkout_url"] + "?";
+          paywall["body"] = "Get every sports story that matters. Only $" + price + "/month.";
+
+          if (gb_ie_country_code) {
+            paywall["body"] = "Get every football story that matters. Only £" + price + " a month.";
+          }
+
+          if (ca_country_code) {
+            paywall["vanity_code"] = "intro1";
+            paywall["pc"] = "cadmonthly2";
+            paywall["checkout_url"] = "/checkout2/" + paywall["vanity_code"] +  "/" + paywall["pc"];
+            paywall["href"] = paywall["checkout_url"] + "?";
+          }
+
+          paywall['body'] = '<div class="nse-greytext">' + paywall['body'] + "</div>";
+          renderPaywall(paywall, show_app_paywall, false, locale);
+        }
+      } else if (show_app_paywall && !force_web_checkout) {
+        wall_type = "app_paywall";
+        paywall["pc"] = "appdownloadwhite";
+        window.article_meta["app_paywall"] = true;
+        var app_download_link =
+          smart_link +
+          "&site_id=" +
+          window.article_id +
+          "&creative_id=" +
+          session_id +
+          "&article_id=" +
+          window.article_id +
+          "&session_id=" +
+          session_id;
+
+        if (source) {
+          app_download_link += "&source=" + source;
+        }
+
+        if (
+          Cookies.get("last_ad_id_clicktime") &&
+          Cookies.get("last_ad_id_clicked")
+        ) {
+          app_download_link =
+            app_download_link +
+            "&last_ad_id_clicktime=" +
+            Cookies.get("last_ad_id_clicktime") +
+            "&last_ad_id_clicked=" +
+            Cookies.get("last_ad_id_clicked");
+        }
+        paywall["href"] = app_download_link;
+      } else if (pc_from_url) {
+        paywall["header"] = "Subscribe Now";
+        paywall["body"] =
+          "Subscribe now to get full access to the new sports page. Must-read content, player grades, stuff you can't get anywhere else.";
+        paywall["button_text"] = "View Plans";
+        paywall["pc"] = pc_from_url;
+        paywall["alt_button_text"] = "View Plans";
+        paywall["checkout_url"] = build_href("428", paywall["pc"]);
+        paywall["href"] = paywall["checkout_url"] + (source ? "&source=" + source : "");
+      } else if (!force_web_checkout) {
+        var plan_id = 429;
+        paywall["plan_id"] = plan_id;
+        paywall["checkout_url"] = "/checkout/?plan_id=" + plan_id;
+        paywall["href"] = paywall["checkout_url"] + (source ? "&source=" + source : "");
+        paywall["header"] = "Get inside the game.";
+        paywall["body"] = "Smart analysis. Powerful stories.";
+        paywall["button_text"] = "Start Free Trial";
+        paywall["alt_button_text"] = "Start Free Trial";
+      } else if (ninety_day_test) {
+        paywall["header"] = "Start a trial to read full story";
+        paywall["body"] =
+          "Start your trial now to read this story and enjoy ad-free sports coverage on The Athletic.";
+        paywall["button_text"] = "START TRIAL";
+        paywall["plan_id"] = 66;
+        paywall["pc"] = "ninetydaytest";
+        paywall["checkout_url"] = "/checkout/?plan_id=66&pc=" + paywall["pc"];
+        paywall["href"] = paywall["checkout_url"] + (source ? "&source=" + source : "");
+      } else {
+        // Default paywall, free trial
+        paywall["header"] = "Start FREE trial to read full story";
+        paywall["body"] =
+          "Start your free 7-day trial now to read this story and enjoy ad-free sports coverage on The Athletic.";
+        paywall["button_text"] = "TRY FOR FREE";
+        paywall["plan"] = "429";
+        paywall["plan_id"] = 429;
+        paywall["checkout_url"] = "/checkout/?plan_id=429";
+        paywall["href"] = paywall["checkout_url"] + (source ? "&source=" + source : "");
+        paywall["alt_button_text"] = "TRY FOR FREE";
+      }
+
+      window.paywall = paywall;
+
+      if(paywall['href']) {
+        window.article_meta['paywall_cta_url'] = paywall['href'];
+      }
+      if(paywall['button_text']) {
+        window.article_meta['paywall_cta'] = paywall['button_text'];
+      }
+
+      // Make sure article meta has pc set
+      if (paywall["pc"] && !window.article_meta["coupon_code"]) {
+        window.article_meta["coupon_code"] = paywall["pc"];
+      }
+
+      wait_for_paywall = window.paywall_tool_2021;
+
+      if (!wait_for_paywall) {
+        renderPaywall(paywall, show_app_paywall, false, locale);
+      }
+
+      if (mobile && !wait_for_paywall) {
+        // If this is android or ios paywall, also log a second event for app-paywall-view (TODO combine these into a single track_analytics() call)
+        window.article_meta["article_id"] = window.article_id;
+        window.article_meta["is_mobile_web"] = true;
+      }
+
+      if (window.email_paywall) {
+        $("#email-paywall-form").submit(function (event) {
+          event.preventDefault();
+          var email = $("#email-input").val();
+          $(".spinner").removeClass("hidden");
+          if (!isEmail(email)) {
+            alert("Please enter a valid email");
+            $(".spinner").addClass("hidden");
+          } else {
+            // the email is valid
+            $.ajax({
+              type: "POST",
+              url: "<?= WP_HOME; ?>/web-api",
+              data: {
+                action: "submit-email-paywall",
+                post_id: "<?= $id; ?>",
+                email: email,
+              },
+              success: function (response) {
+                $(".spinner").addClass("hidden");
+                window.location.href =
+                  "/<?= $id; ?>/?email_unlock=1&email=" + email;
+              },
+              error: function (response) {
+                $(".spinner").addClass("hidden");
+                alert(response.responseJSON.error.message);
+              },
+            });
+          }
+        });
+      }
+
+      if (window.registration_paywall) {
+        // get the facebook login url
+        $.ajax({
+          type: "GET",
+          url: "/web-api",
+          data: {
+            action: "get-facebook-login-url",
+            after_fb_redirect_url:
+              window.location.origin + "/" + window.article_id,
+            grant_free_article: true,
+          },
+          success: function (url) {
+            $(".facebook-needed").removeClass("hidden");
+            window.facebook_url = url;
+          },
+        });
+        $(".facebook-registration-wall").on("click", function () {
+          window.location = window.facebook_url;
+        });
+        $("#registration-paywall-form").submit(function (event) {
+          event.preventDefault();
+          $(".spinner").removeClass("hidden");
+          $("#next-button").addClass("hidden");
+          $("#loading-container").addClass("pad-top-20");
+          $.ajax({
+            type: "POST",
+            url: "/web-api",
+            data: window.form_data,
+            success: function (response) {
+              if (typeof fbq !== "undefined") {
+                fbq("track", "CompleteRegistration");
+              }
+              if (response.user_id) {
+                window.form_data["user_id"] = response.user_id;
+              }
+              track_analytics(
+                "registration-paywall-signup",
+                "article_id",
+                window.article_id
+              );
+              $("#registration-paywall-form-container").hide();
+              $("#registration-email").text(window.form_data.reg_email);
+              $("#registration-paywall-confirmation").removeClass("hidden");
+              $(".spinner").addClass("hidden");
+            },
+            error: function (response) {
+              var message = "There was an error, please try again";
+              if (response.responseJSON && response.responseJSON.message) {
+                message = response.responseJSON.message;
+              } else if (response.message) {
+                message = response.message;
+              }
+              track_analytics(
+                "registration-paywall-error",
+                "error_message",
+                message
+              );
+              $(".spinner").addClass("hidden");
+              $("#next-button").removeClass("hidden");
+              $("#loading-container").removeClass("pad-top-20");
+              alert(message);
+            },
+          });
+          if (typeof fbq !== "undefined") {
+            fbq("track", "InitiateCheckout", {
+              contents: [
+                {
+                  id: window.article_id,
+                  quantity: 1,
+                },
+              ],
+              content_type: "product",
+            });
+            fbq("track", "CompleteRegistration");
+          }
+        });
+        $("#registration-verification-form").submit(function (event) {
+          event.preventDefault();
+
+          $(".spinner").removeClass("hidden");
+          $("#verification-next-button").addClass("hidden");
+          $("#verification-loading-container").addClass("pad-top-20");
+          $.ajax({
+            type: "POST",
+            url: "/web-api",
+            data: window.form_data,
+            success: function (response) {
+              window.location.href = window.location.href;
+              track_analytics(
+                "registration-paywall-verification-submitted",
+                "",
+                ""
+              );
+            },
+            error: function (response) {
+              var message = response.responseJSON.message;
+              $(".spinner").addClass("hidden");
+              $("#verification-next-button").removeClass("hidden");
+              $("#verification-loading-container").removeClass("pad-top-20");
+              alert(message);
+            },
+          });
+        });
+        $("#loading-container").on("click", function () {
+          window.form_data = {};
+          $.each($("#registration-paywall-form").serializeArray(), function (
+            _,
+            kv
+          ) {
+            window.form_data[kv.name] = kv.value;
+          });
+          window.form_data["action"] = "create-account-with-free-article";
+          window.form_data["article_id"] = window.article_id;
+
+          // validate email, pw if they exist
+          var error_string = "";
+          var pw_error = window.form_data["reg_pw"].length < 8;
+          var regex = /^([a-zA-Z0-9_.+-])+\@(([a-zA-Z0-9-])+\.)+([a-zA-Z0-9]{2,8})+$/;
+          var email_error = !regex.test(window.form_data["reg_email"]);
+          var fname_error = window.form_data["reg_fname"].length < 1;
+          var lname_error = window.form_data["reg_lname"].length < 1;
+          if (!pw_error && !fname_error && !lname_error && !email_error) {
+            $("#registration-paywall-form").submit();
+            return;
+          } else if (pw_error) {
+            error_string = "Please choose a password of at least 8 characters";
+          } else if (email_error) {
+            error_string = "Please use a valid email address.";
+          } else if (fname_error) {
+            error_string = "Please enter your first name";
+          } else if (lname_error) {
+            error_string = "Please enter your last name";
+          }
+          alert(error_string);
+        });
+        $("#verification-loading-container").on("click", function () {
+          window.form_data["action"] = "verify-email-from-paywall";
+          window.form_data["article_id"] = window.article_id;
+          window.form_data["verification_code"] = $("#verification-code").val();
+          $("#registration-verification-form").submit();
+        });
+        $("#reg_email").change(function () {
+          $.ajax({
+            type: "POST",
+            url: "/live-username-check",
+            data: { reg_email: $("#reg_email").val() },
+            dataType: "JSON",
+            success: function (data) {
+              // false response means email address is already taken
+              window.email_is_taken = !data;
+              if (window.email_is_taken) {
+                error = true;
+                alert("That email is already in use, please choose another");
+              }
+            },
+          });
+        });
+      }
+
+      $(".download-app-press").on("click", function (event) {
+        event.preventDefault();
+        var meta = { article_id: window.article_id };
+        if (window.article_meta["experiment_id"]) {
+          meta["experiment_id"] = window.article_meta["experiment_id"];
+        }
+        if (window.article_meta["variant_id"]) {
+          meta["variant_id"] = window.article_meta["variant_id"];
+        }
+        if (source) {
+          meta["source"] = source;
+        }
+        if (typeof fbq !== "undefined") {
+          fbq("track", "Lead", {
+            contents: [
+              {
+                id: window.article_id,
+                quantity: 1,
+              },
+            ],
+            content_type: "product",
+          });
+        }
+        if (typeof gtag !== "undefined") {
+          gtag("event", "Paywall Button Press");
+        }
+        $.ajax({
+          url: "/track-analytics/",
+          data: {
+            event_name: "download-app-press",
+            key: "promo_code",
+            value: paywall["pc"],
+            meta: meta,
+          },
+          success: function () {
+            window.location.href = $("#download-app-link").attr("href");
+          },
+          error: function () {
+            window.location.href = $("#download-app-link").attr("href");
+          },
+        });
+      });
+    }
+
+    if (!has_article_view_been_logged) {
+      log_article_view(ad_id);
+    }
+
+    if (paywall) {
+      stat_tags = {
+        "checkout_url": paywall["checkout_url"],
+        "country_code": countryCode.toLowerCase(),
+        "browser_locale": locale.toLowerCase(),
+        "vanity_code": paywall["vanity_code"],
+        "plan_id": paywall["plan_id"],
+        "promo_code": paywall["pc"],
+        "wall_type": wall_type,
+      };
+
+      emit_stat_paywall_view(stat_tags);
+    }
+  }
+
+  if (logged_in_sub) {
+    if (typeof fbq !== "undefined") {
+      fbq("trackCustom", "LoggedInSub");
+    }
+    if (typeof gtag !== "undefined") {
+      gtag("event", "login");
+    }
+  }
+
+  window.dataLayer = window.dataLayer || [];
+  function gtag() {
+    dataLayer.push(arguments);
+  }
+  gtag("js", new Date());
+  gtag("config", "AW-812633085");
+
+  var first_visit = Cookies.get("first_visit");
+  if (!first_visit) {
+    if (typeof twq !== "undefined") {
+      twq("init", "nyfzy");
+      twq("track", "PageView");
+    }
+
+    if (typeof fbq !== "undefined") {
+      fbq("trackCustom", "FirstVisit");
+    }
+    if (typeof gtag !== "undefined") {
+      gtag("event", "first_visit");
+    }
+
+    Cookies.set("first_visit", true, { expires: 365 * 20 }); // don't expire
+  }
+
+  if (gb_ie_country_code || domain == "theathletic.co.uk") {
+    country = "GB";
+  } else if (ca_country_code) {
+    country = "CA";
+  } else {
+    country = "US";
+  }
+
+  if (page_type == "undefined") {
+    // do nothing
+  } else {
+    dataLayer.push({
+      country: country,
+      league: league_name,
+      city: city_name,
+      team: team_name,
+      articleTitle: article_title,
+      customerId: customer_id,
+      customerEmail: customer_email,
+    });
+  }
+
+  $("#search-results-dismiss-button").on("click", function () {
+    var timestamp = new Date();
+    $.ajax({
+      url: "/track-analytics/",
+      data: {
+        event_name: "search-cancel-click",
+        key: "article_id",
+        value: 0,
+        meta: {
+          search_query: $(".author-search-text").val(),
+          session_id: session_id,
+          timestamp: timestamp.getTime(),
+          platform: "web",
+        },
+      },
+    });
+  });
+
+  $(".search-list li").on("click", function () {
+    var articleID = $(this).data("post-id");
+    var container = $(this).closest(".search-results-list-items");
+    var searhQuery = container.data("search-query");
+    var timestamp = new Date();
+
+    $.ajax({
+      url: "/track-analytics/",
+      data: {
+        event_name: "search-result-click",
+        key: "article_id",
+        value: articleID != null ? articleID : 0,
+        meta: {
+          search_query: container.data("search-query"),
+          timestamp: timestamp.getTime(),
+          session_id: session_id,
+          platform: "web",
+          result_type: "post",
+          result_id: articleID,
+          result_position: $(this).data("result-index"),
+        },
+      },
+    });
+  });
+}
+
+window.percentRead = 0;
+$(window).on("load", function () {
+  var $bodytext = $(".article-scroll-body");
+  if ($bodytext.length) {
+    var articleTop = $bodytext.offset().top;
+    var articleHeight = $bodytext.height() - articleTop;
+
+    window.addEventListener(
+      "scroll",
+      function (e) {
+        var currentPercentRead =
+          ($(window).scrollTop() - articleTop) / articleHeight;
+        currentPercentRead = Math.round(
+          100 * Math.max(Math.min(currentPercentRead, 1), 0)
+        );
+        if (
+          currentPercentRead % 10 == 0 &&
+          currentPercentRead > window.percentRead
+        ) {
+          window.percentRead = currentPercentRead;
+        }
+      },
+      supportsPassive ? { passive: true } : false
+    );
+  }
+});
+
+$(window).on("beforeunload", function (e) {
+  var $bodytext = $(".article-scroll-body");
+  if ($bodytext.length) {
+    track_analytics(
+      "article-scroll",
+      "article_id",
+      window.article_id,
+      { percent_read: window.percentRead },
+      false
+    );
+  }
+});
+
+function add_string_to_cookie_csv(string_to_add, cookie_name) {
+  if (!string_to_add) {
+    return;
+  }
+
+  // get the current cookie values as an array if it exists, or create a new array
+  var current_cookie_value = Cookies.get(cookie_name);
+  if (current_cookie_value) {
+    current_cookie_value = decodeURIComponent(current_cookie_value);
+    // Fix a bug where repeat users whose cookie string has been encoded multiple times without being properly decoded
+    current_cookie_value = current_cookie_value.replace(/%[25]*C/g, ",");
+    tokens = current_cookie_value.split(",");
+  } else {
+    tokens = [];
+  }
+
+  // add string to array
+  tokens.push(string_to_add);
+
+  // limit this to the last 5 items in the list
+  tokens = tokens.slice(Math.max(tokens.length - 5, 0));
+
+  // sav dat cookie
+  Cookies.set(cookie_name, tokens.join(","), { expires: 365 });
+}
+
+function enforce_cookie_length_limit(cookie_name, limit) {
+  // This is a semi-hack to ensure that cookies do not grow large enough to cause problems for next.js
+
+  var current_cookie_value = Cookies.get(cookie_name);
+  if (current_cookie_value) {
+    current_cookie_value = decodeURIComponent(current_cookie_value);
+    // Fix a bug where repeat users whose cookie string has been encoded multiple times without being properly decoded
+    current_cookie_value = current_cookie_value.replace(/%[25]*C/g, ",");
+    tokens = current_cookie_value.split(",");
+  } else {
+    return;
+  }
+
+  // limit this to the last 5 items in the list
+  tokens = tokens.slice(Math.max(tokens.length - limit, 0));
+
+  // sav dat cookie
+  Cookies.set(cookie_name, tokens.join(","), { expires: 365 });
+}
+
+function is_android() {
+  return /Android/i.test(navigator.userAgent);
+}
+
+function is_ios() {
+  return /iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+function is_safari() {
+  return /^((?!chrome|android).)*safari/i.test(navigator.userAgent) && !navigator.userAgent.match(/CriOS/i);
+}
+
+function is_mobile() {
+  return is_android() || is_ios();
+}
+
+function league_is_soccer(league_id) {
+  var soccer_league_ids = window.soccer_league_ids.map(id => id.toString());
+  return soccer_league_ids.includes(league_id);
+}
+
+function league_is_college_basketball(league_id) {
+  var college_basketball_league_ids = window.college_basketball_league_ids.map(id => id.toString());
+  return college_basketball_league_ids.includes(league_id);
+}
+
+function league_is_american_football(league_id) {
+  var american_football_league_ids =  window.american_football_league_ids.map(id => id.toString());
+  return american_football_league_ids.includes(league_id);
+}
+
+function league_is_excluded_for_slideup_paywall(league_id) {
+  var excluded_leagues = window.slideup_paywall_excluded_league_ids.map(id => id.toString());
+  return excluded_leagues.includes(league_id);
+}
+
+function build_href(plan, promo_code, promo_code_from_url) {
+  if (!plan) {
+    plan = "428";
+  }
+
+  // promo code
+  var pc_qs = "";
+
+  if (promo_code) {
+    pc_qs = "&pc=" + promo_code;
+  }
+
+  if (promo_code_from_url) {
+    pc_qs = "&pc=" + promo_code_from_url;
+  }
+
+  return "/checkout/?plan_id=" + plan + pc_qs;
+}
+
+function track_analytics(event_name, key, value, meta, async) {
+  var url = "/track-analytics/";
+  var data = { event_name: event_name, key: key, value: value, meta: meta };
+  var queryParams = new URLSearchParams(window.location.search)
+  var amp_reader_id = queryParams.get('amp_reader_id')
+
+  if (amp_reader_id) {
+    data.meta['amp_reader_id'] = amp_reader_id
+  }
+
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon(url, JSON.stringify(data));
+  } else {
+    async = typeof async !== "undefined" ? async : true;
+    $.ajax({ url: url, data: data, async: async });
+  }
+  return false;
+}
+
+function track_slide_up_paywall_click(element, source, isModal, paywallCta=null, paywallCtaUrl=null){
+  var metaBlob = {
+    "has_paywall": 1,
+    "is_modal": isModal
+  };
+  if(paywallCta){
+    metaBlob['paywall_cta'] = paywallCta;
+  }
+  if(paywallCtaUrl){
+    metaBlob['paywall_cta_url'] = paywallCtaUrl;
+  }
+
+  track_analytics_avro(
+    'click',
+    'article',
+    element,
+    "article_id",
+    window.article_id,
+    source,
+    metaBlob
+  );
+}
+
+function track_regwall_social_click(button, regWallViewsInt, source, locale) {
+  track_analytics_avro(
+    'click',
+    'article',
+    button,
+    "article_id",
+    window.article_id,
+    source,
+    {
+      "is_mobile_web": is_mobile() ? "1" : "0",
+      "view_count": regWallViewsInt.toString(),
+      "locale": locale,
+      "has_paywall": 0,
+      "has_regwall": 1,
+      "element": "slideup_regwall"
+    }
+  );
+}
+
+function track_analytics_avro(verb, view, element, object_type, object_id, source, meta_blob) {
+  var url = "/track-analytics/";
+  var data = {
+    event_name: "log-event-avro",
+     key: "",
+     value: "",
+     meta_blob: JSON.stringify(meta_blob).replaceAll('"', "\\\""),
+     verb: verb,
+     view: view,
+     element: element,
+     object_type: object_type,
+     object_id: object_id,
+     session_id: Cookies.get("ath_anonymous_user_id"),
+     locale: navigator.language ? navigator.language.toLowerCase() : "",
+     source: source != null ? source : Cookies.get("source")
+   };
+
+   var user_id = window.article_meta && window.article_meta.user_id;
+   if (user_id) {
+     data['user_id'] = user_id;
+   }
+
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon(url, JSON.stringify(data));
+  } else {
+    async = typeof async !== "undefined" ? async : true;
+    $.ajax({ url: url, data: data, async: async });
+  }
+  return false;
+}
+
+function add_twitter_pixel() {
+  !(function (e, t, n, s, u, a) {
+    e.twq ||
+      ((s = e.twq = function () {
+        s.exe ? s.exe.apply(s, arguments) : s.queue.push(arguments);
+      }),
+      (s.version = "1.1"),
+      (s.queue = []),
+      (u = t.createElement(n)),
+      (u.async = !0),
+      (u.src = "//static.ads-twitter.com/uwt.js"),
+      (a = t.getElementsByTagName(n)[0]),
+      a.parentNode.insertBefore(u, a));
+  })(window, document, "script");
+  twq("init", "o29ae");
+  twq("track", "PageView");
+}
+
+function dont_break_on_last_space(text) {
+  var word_array = text.split(" ");
+  var result = "";
+  for (var i = 0; i <= word_array.length - 1; i++) {
+    result += word_array[i];
+    if (i == word_array.length - 2) {
+      result += "&nbsp;";
+    } else {
+      result += " ";
+    }
+  }
+  return result;
+}
+
+function is_paid_source(source) {
+  if (!source) {
+    return false;
+  }
+  return (
+    source.includes("ads") ||
+    [
+      "applesearch",
+      "Google Search SmartLink",
+      "googleuac",
+      "taboola",
+      "affiliate",
+      "alum",
+      "applesearch",
+      "fbpcadbc",
+      "google",
+      "googleuac",
+      "igadbsbc",
+      "paid",
+      "powerinboxad",
+      "r2c2",
+      "sixershero",
+      "sportsareback_instapage",
+      "taboola",
+      "ukanniversary_instapage",
+      "youtubevideoad",
+    ].includes(
+      source
+    )
+  );
+}
+
+function emit_stat_paywall_view(stat_tags) {
+  $.ajax({
+    type: "POST",
+    url: "/web-api",
+    data: {
+      action: "emit-stat-incr",
+      key: "paywall.view",
+      tags: stat_tags
+    }
+  });
+}
+
+function should_article_show_paywall_only() {
+  var paywall_only_articles = [2499821];
+
+  return paywall_only_articles.includes(window.article_id);
+}
+
+function log_article_view(ad_id, paywall = null) {
+  update_article_meta_for_article_view_event(ad_id, paywall);
+
+  track_analytics(
+    "article-view",
+    "article_id",
+    window.article_id,
+    window.article_meta
+  );
+  compassClient.getTreatmentForExperiment('Compass A/A test php').then(treatment => {
+    compassClient.logExposure('Compass A/A test php', treatment);
+
+    // window.article_meta['experiment_id'] = 'Compass A/A test php';
+    // window.article_meta['variant_id'] = treatment;
+
+  });
+}
+
+function update_article_meta_for_article_view_event(ad_id, paywall = null) {
+  if (ad_id) {
+    window.article_meta["ad_id"] = ad_id;
+    window.article_meta["last_ad_id_clicked"] = ad_id;
+  }
+
+  if (window.article_meta["has_paywall"] === "true"){
+    window.article_meta["has_paywall"] = 1;
+    if(paywall) {
+      let href = paywall["href"];
+
+      let vanity = href.replace("/checkout2/", "");
+      vanity = vanity.replace("?", "")
+    
+      let paywall_template = paywall["paywall_template"].replace("#", "");
+      paywall_template = paywall_template.replaceAll('-', '_')
+
+      window.article_meta["vanity"] = vanity;
+      window.article_meta["element"] = paywall_template;
+      window.article_meta["paywall_cta"] = paywall["button_text"];;
+    }
+  } else {
+    window.article_meta["has_paywall"] = 0;
+  }
+
+  if (window.article_meta["has_regwall"]) {
+    if (regwall_copy_experiment_treatment === "A") {
+      window.article_meta["header_copy"] = "Create a free account to read 3 articles on us.";
+    } else if (regwall_copy_experiment_treatment === "B") {
+      window.article_meta["header_copy"] = "Create an account to read 3 free articles.";
+    } else {
+      window.article_meta["header_copy"] = "Create a free account to continue reading.";
+    }
+  }
+
+  if(slideup_paywall_treatment){
+    window.article_meta["has_paywall"] = 1;
+    if (slideup_paywall_treatment === "CTRL") {
+      window.article_meta["element"] = "inline_paywall";
+      window.article_meta["experiment_id"] = "Slide-Up Paywall Test";
+      window.article_meta["variant"] = "CTRL";
+      window.article_meta["paywall_cta"] = "Subscribe";
+      window.article_meta["paywall_cta_url"] = "/checkout2/introannual50";
+      window.article_meta["is_modal"] = 0;
+    } else if (slideup_paywall_treatment === "A"){
+      window.article_meta["element"] = "slideup_paywall";
+      window.article_meta["experiment_id"] = "Slide-Up Paywall Test";
+      window.article_meta["variant"] = "A";
+      window.article_meta["paywall_cta"] = "Subscribe";
+      window.article_meta["paywall_cta_url"] = "/checkout2/introannual50";
+      window.article_meta["is_modal"] = 1;
+    } else if(slideup_paywall_treatment === "B"){
+      window.article_meta["element"] = "slideup_paywall";
+      window.article_meta["experiment_id"] = "Slide-Up Paywall Test";
+      window.article_meta["variant"] = "B";
+      window.article_meta["paywall_cta"] = "Subscribe";
+      window.article_meta["paywall_cta_url"] = "/checkout2/introannual50";
+      window.article_meta["is_modal"] = 1;
+    }
+  }
+  if (window.propensity_paywall && is_propensity_paywall && Cookies.get('propensity_paywall_treatment')) {
+    window.article_meta["experiment_id"] = "Propensity Paywall Test Non-Amp";
+    window.article_meta["variant"] = Cookies.get("propensity_paywall_treatment");
+
+    const subscriberScore = window.article_meta && window.article_meta.subscriber_score;
+    if (typeof subscriberScore !== 'number' || subscriberScore > 0.06 || Cookies.get("propensity_paywall_treatment")==="CTRL") {
+      window.article_meta["has_paywall"] = 1;
+      window.article_meta["has_regwall"] = 0;
+      window.article_meta["element"] = "slideup_paywall";
+      window.article_meta["paywall_cta"] = "Subscribe";
+      window.article_meta["tier"] = 1;
+      window.article_meta["vanity"] = "introannual50";
+    } else if (subscriberScore > 0.023) {
+      window.article_meta["has_paywall"] = 1;
+      window.article_meta["has_regwall"] = 0;
+      window.article_meta["element"] = "slideup_paywall";
+      window.article_meta["paywall_cta"] = "Subscribe";
+      window.article_meta["tier"] = 2;
+      window.article_meta["vanity"] = "intro7dannual";
+    } else {
+      window.article_meta["has_paywall"] = 1;
+      window.article_meta["has_regwall"] = 0;
+      window.article_meta["element"] = "slideup_paywall";
+      window.article_meta["paywall_cta"] = "Get Offer";
+      window.article_meta["tier"] = 3;
+      window.article_meta["vanity"] = "intro1";
+    }
+  }
+}
+
+function render_regwall_copy(ad_id) {
+  compassClient.getTreatmentForExperiment('Reg Wall Copy Experiment').then(treatment => {
+    compassClient.logExposure('Reg Wall Copy Experiment', treatment);
+    regwall_copy_experiment_treatment = treatment;
+
+    if (treatment === 'A') {
+      $("#regwall-copy-variant-CTRL").hide();
+      $("#regwall-copy-variant-A").show();
+    } else if (treatment === 'B') {
+      $("#regwall-copy-variant-CTRL").hide();
+      $("#regwall-copy-variant-B").show();
+    }
+
+    log_article_view(ad_id);
+  });
+}
+
+//Add a cookie with the value and an hour expiration time.
+function should_user_get_deal_fatigue_paywall(){
+  if(Cookies.get("offer_deal_fatigue_paywall")){
+    return Cookies.get("offer_deal_fatigue_paywall")==="true";
+  }
+
+  var shouldShowPaywall = should_user_get_special_offer(1);
+  var in60Minutes = 1/24;
+  Cookies.set("offer_deal_fatigue_paywall", shouldShowPaywall, {expires: in60Minutes});
+
+  return shouldShowPaywall;
+}
+
+function should_user_get_offer_independent_paywall() {
+  if (Cookies.get("should_see_offer_independent_paywall")) {
+    return Cookies.get("should_see_offer_independent_paywall") === "true";
+  }
+
+  var shouldGetOffer = should_user_get_special_offer(1);
+  Cookies.set("should_see_offer_independent_paywall", shouldGetOffer, { expires: 365 });
+  return shouldGetOffer;
+}
+
+function should_user_get_special_offer(special_offer_percentage) {
+  if ((Math.random() * 100) < special_offer_percentage) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+function build_us_canada_offer_independent_paywall(paywall) {
+  paywall["subheader"] = 'INTRODUCTORY OFFER';
+  paywall["header"] = 'Access all of The Athletic.<br> Just $1/month.';
+  paywall["body"] = 'Get every sports story that matters.';
+  paywall["button_text"] = 'Subscribe Now';
+  paywall["href"] = '/checkout2/IDde0z3523s9?';
+}
+
+function build_uk_row_offer_independent_paywall(paywall) {
+  paywall["subheader"] = 'INTRODUCTORY OFFER';
+  paywall["header"] = 'Access all of The Athletic.<br> Just £1 a month.';
+  paywall["body"] = 'Get every football story that matters.';
+  paywall["button_text"] = 'Subscribe Now';
+  paywall["href"] = '/checkout2/IDde0z3523s9?';
+}
+
+function build_us_canada_deal_fatigue_paywall(paywall){
+  paywall["subheader"] = 'Today Only';
+  paywall["header"] = 'Our best deal:<br>$1/month for 12 months.';
+  paywall["body"] = 'Every sports story that matters.';
+  paywall["button_text"] = 'Get Offer';
+  paywall["href"] = '/checkout2/IDdefati0zs9?';
+}
+
+function build_uk_row_deal_fatigue_paywall(paywall){
+  paywall["subheader"] = 'Today Only';
+  paywall["header"] = 'Our best deal:<br>£1 a month for 12 months.';
+  paywall["body"] = 'Every sports story that matters.';
+  paywall["button_text"] = 'Get Offer';
+  paywall["href"] = '/checkout2/IDdefati0zs9?';
+}
+
+function addScrollListener(scrollDepthLimit, type) {
+  tryAnimateScrollDepth(scrollDepthLimit, type); // Need to do this so that animation happens after refresh if scroll depth barrier is surpassed
+  window.addEventListener("scroll", function() {
+    tryAnimateScrollDepth(scrollDepthLimit, type);
+  });
+}
+
+function showSlideupRegwall(scrollDepthLimit) {
+  addScrollListener(scrollDepthLimit, 'regwall');
+  $("#slide-up-regwall").removeClass("hidden");
+  $("#cookie-notice-v2").css("z-index", 2);
+}
+
+function showSlideupPaywall(animationDelay, scrollDepthLimit, source, ctaText, ctaUrl) {
+  window.slideup_paywall_shown = true;
+
+  if (typeof animationDelay === 'number') {
+    setTimeout(function() {
+      animateSlideup('paywall');
+    }, animationDelay);
+  } else if (typeof scrollDepthLimit === 'number') {
+    addScrollListener(scrollDepthLimit, 'paywall');
+  }
+
+  //analytics tracking
+  $('#slideup-paywall-homepage').on('click', function() {
+    track_slide_up_paywall_click('homepage', source, 1);
+  });
+
+  $('#slideup-paywall-login').on('click', function() {
+    track_slide_up_paywall_click('login', source, 1);
+  });
+
+  $('#slideup-paywall').find('#paywall-anchor').on('click', function() {
+    track_slide_up_paywall_click('subscribe', source, 1, ctaText, ctaUrl);
+  });
+
+  hideInlinePaywallAndCookieBanner();
+}
+
+function animateSlideup(type) {
+  if (type == 'paywall') {
+    if (paywallSlideupAnimationComplete) { return;}
+
+    paywallSlideupAnimationComplete = true;
+    $(".slideup-paywall-container").removeClass("hidden");
+    slideUp(400, 'paywall');
+  } else {
+    slideUp(400, 'regwall')
+  }
+
+  darkenAndScrollLock(400);
+}
+
+function slideUp(animationDuration, type) {
+  let heightOffset = "-" + $(".slideup-" + type + "-container").outerHeight() + "px";
+  $(".slideup-" + type + "-container").css("bottom", heightOffset);
+
+  if (type == 'paywall') {
+    $(".slideup-paywall-container").css("display", "flex");
+  }
+
+  $(".slideup-" + type + "-container").animate({bottom: "0px"}, animationDuration);
+}
+
+function darkenAndScrollLock(animationDuration) {
+  $("body").addClass("noscroll");
+  $("body").append("<div class='scroll-lock-overlay'></div>");
+  $(".scroll-lock-overlay").animate({opacity: "65%"}, animationDuration);
+}
+
+function tryAnimateScrollDepth(scrollDepthLimit, type) {
+  if (window.scrollY > scrollDepthLimit) {
+    animateSlideup(type);
+  }
+}
+
+function hideInlinePaywallAndCookieBanner() {
+  $("#paywall-container").hide();
+  $(".floating-paywall-article-container").css("margin-bottom", "0px");
+  $("#cookie-notice-v2").css("z-index", 2);
+}
+
+function sourceMatches(source, jsonSource, sourceStrings) {
+  if (sourceStrings) {
+    if(sourceStrings.includes(source)){
+      //we matched on a specific source
+      if(window.propensity_paywall && !Cookies.get('propensity_paywall_treatment')){
+        var session_id = Cookies.get("ath_anonymous_user_id");
+        // Parse the second to last digit since session_id could be greater than max int
+        // Also, since older session ids end in "1" due to a previous bug, use cannot use the last digit
+        var last_digit_int = parseInt(session_id[session_id.length-2]);
+        Cookies.set(
+          'propensity_paywall_treatment',
+          (last_digit_int % 2 == 0) ? 'CTRL' : 'A',
+          { expires: 365 * 20 } // don't expire
+        );
+      }
+      return true;
+    }
+    return false;
+  } else {
+    return is_paid_source(source) ?
+      jsonSource == 'all' || jsonSource == 'paid':
+      jsonSource == 'all' || jsonSource == 'unpaid';
+  }
+}
+
+function teamIdsMatch(teamIds) {
+  return teamIds ? (
+    window.article_meta.all_tagged_teams && window.article_meta.all_tagged_teams.length &&
+    window.article_meta.all_tagged_teams.some(teamId => teamIds.includes(parseInt(teamId)))
+  ) : true;
+}
+
+function leagueIdsMatch(leagueIds) {
+  return leagueIds ?
+  (
+    window.article_meta && window.article_meta.league_ids && window.article_meta.league_ids.length &&
+    window.article_meta.league_ids.some(leagueId => leagueIds.includes(parseInt(leagueId)))
+  )
+  : true;
+}
+
+function articleIdsMatch(articleIds) {
+  return articleIds ? articleIds.includes(window.article_id) : true;
+}
+
+function subscriberScoresMatch(subscriberScoreFloor) {
+
+  const treatment = Cookies.get('propensity_paywall_treatment');
+
+  if (treatment === 'CTRL') {
+    return !(typeof subscriberScoreFloor === 'number');
+  } else if (treatment === 'A') {
+    const subscriberScore = (window.article_meta && window.article_meta.subscriber_score)
+      ? window.article_meta.subscriber_score : 1 // show tier 1 if article is missing score
+    return subscriberScore >= subscriberScoreFloor;
+  }
+  return true;
+}
+
+function get_paywall_rules(countryCode, source){
+  const now = new Date()
+
+  //check local storage for any existing paywall data
+  var localPaywallData = JSON.parse(window.localStorage.getItem("paywallData"));
+
+  //Check to see if we have a saved copy of the paywall data and it isn't expired.
+  if(localPaywallData && now.getTime() < localPaywallData.expiry){
+    filter_paywalls(JSON.parse(localPaywallData.value), source);
+  }
+  else{
+    //go and get fresh paywall data
+    fetch(window.paywall_tool_bucket + countryCode + '.json')
+    .then(response => response.json())
+    .then(data => {
+
+      //build the local storage object
+      const item= {
+        value: JSON.stringify(data),
+        expiry: now.getTime() + (1000 * 60 * 60 * 24) //24 hours
+      }
+
+      //save paywall data locally
+      window.localStorage.setItem("paywallData", JSON.stringify(item));
+
+      //sort paywalls
+      filter_paywalls(data, source);
+    }).catch((error) => {
+      console.log(error);
+    });
+  }
+}
+
+function filter_paywalls(data, source){
+  let paywall = data
+  .sort((a, b) => a['priority_level'] - b['priority_level'])
+  .find((currentPaywall) => (
+    sourceMatches(source, currentPaywall['source'], currentPaywall['source_strings']) &&
+    teamIdsMatch(currentPaywall['team_ids']) &&
+    leagueIdsMatch(currentPaywall['league_ids']) &&
+    articleIdsMatch(currentPaywall['article_ids'])
+  ));
+  //if we have a paywall, update the CTAs
+  if (paywall) {
+    update_ctas_from_paywall(paywall);
+  }
+}
+
+function update_ctas_from_paywall(paywall){
+  if(paywall){
+    //get the default checkout url
+    var checkoutUrl  = paywall['experiment_info']['CTRL']['href']['default'];
+  }
+
+  for(var i =0; i< checkout_ctas.length; i++){
+    if($(checkout_ctas[i]).length > 0){
+
+      //Retain any existing URL params.
+      var newCheckoutUrl = append_params($(checkout_ctas[i]).prop('href'), checkoutUrl);
+
+      //Update the checkout href to match the paywall
+      if(newCheckoutUrl){
+        $(checkout_ctas[i]).attr("href", newCheckoutUrl);
+      }
+    }
+  }
+}
+
+function append_params(original_url, paywall_url){
+  if(original_url){
+    var url = new URL(original_url);
+    var params = new URLSearchParams(url.search);
+
+    //Need to remove the plan id as this may cause issues at the checkout page
+    params.delete("plan_id");
+    return paywall_url + params.toString();
+  }
+}
+
+function renderRegwallAnalytics(locale) {
+  var regWallViews = Cookies.get("reg_wall_views");
+  var regWallViewsInt = 1;
+  if (regWallViews) {
+    regWallViewsInt += parseInt(regWallViews) ;
+  }
+  Cookies.set("reg_wall_views", regWallViewsInt, {expires: 365});
+  wall_type = "reg_wall";
+
+  $('#facebook_login_button, #facebook_login_button_su').on('click', function() {
+    track_regwall_social_click('facebook', regWallViewsInt, source, locale);
+  });
+
+  $('#google_login_button, #google_login_button_su').on('click', function() {
+    track_regwall_social_click('google', regWallViewsInt, source, locale);
+  });
+
+  $('#apple_login_button, #apple_login_button_su').on('click', function() {
+    track_regwall_social_click('apple', regWallViewsInt, source, locale);
+  });
+
+  //modal login link
+  $('#regwall-login-link').on('click', function() {
+    track_regwall_social_click('login', regWallViewsInt, source, locale);
+  });
+
+  $('#regwall-email-signup, #regwall-email-signup-su').on('click', function() {
+    track_regwall_social_click('email', regWallViewsInt, source, locale);
+  });
+
+  if (!is_ios()) {
+    $('.apple-login-button').hide();
+  }
+}
+
+function renderPaywall(paywall, show_app_paywall, apple_pay, locale) {
+  if (apple_pay === undefined) {
+    apple_pay = false;
+  }
+
+  if (show_app_paywall && !force_web_checkout) {
+    // Special app download paywall for mobile
+    $(".floating-paywall").hide();
+    $(".article-content-container")
+      .removeClass("floating-paywall-article-container")
+      .addClass("app-inline-paywall-container");
+    $("#download-app-link").attr("href", paywall["href"]);
+
+    $("#app-paywall").show();
+  } else {
+    // Update paywall with dynamic values if present
+    var scoped_paywall = "";
+    var wall = "paywall";
+    if (window.paywall_tool_2021) {
+      $("#floating-paywall").hide();
+      if (window.use_paywall_template) {
+        var paywallTemplate = paywall['paywall_template'] || '#slideup-paywall';
+
+        if (paywallTemplate === '#slideup-regwall' && !window.propensity_paywall) {
+          paywallTemplate = '#slideup-paywall';
+        }
+
+        $(paywallTemplate).show();
+
+        scoped_paywall = paywallTemplate;
+        if (paywallTemplate === '#slideup-paywall') {
+          showSlideupPaywall(null, getScrollDepthForScrollLock(), source, paywall['button_text'], paywall['href']);
+        } else if (paywallTemplate === '#slideup-regwall') {
+          showSlideupRegwall(getScrollDepthForScrollLock());
+          renderRegwallAnalytics(locale);
+          wall = "regwall";
+        }
+      } else {
+        $("#black-paywall-v2").show();
+        scoped_paywall = "#black-paywall-v2";
+      }
+    }
+
+    if (paywall["header"]) {
+      $(scoped_paywall + " #" + wall + "-header")
+        .html(paywall["header"])
+        .show();
+    }
+    if (paywall["subheader"]) {
+      $(scoped_paywall + " #paywall-subheader")
+        .html(paywall["subheader"])
+        .show();
+    }
+    // want to set it to empty
+    if (paywall["body"] != null) {
+      $(scoped_paywall + " #paywall-body").html(
+        dont_break_on_last_space(paywall["body"])
+      );
+    }
+    if (paywall["button_text"]) {
+      $(scoped_paywall + " #paywall-anchor-text").text(
+        paywall["button_text"]
+      );
+    }
+    if (paywall["alt_button_text"]) {
+      $(scoped_paywall + " #paywall-alt-anchor-text").text(
+        paywall["alt_button_text"]
+      );
+    }
+    if (paywall["href"]) {
+      if (!(paywall["href"].indexOf("ref_page") > -1)) {
+        paywall["href"] += "&ref_page=/welcome?redirect=" + window.location.href.split("?")[0];
+      }
+      $(scoped_paywall + " #paywall-anchor").attr("href", paywall["href"]);
+    }
+    if (paywall["excerpt"]) {
+      // TODO add this
+      $("#paywall-excerpt").text(paywall["excerpt"]);
+    }
+    if (paywall["email_paywall"]) {
+      $("#floating-paywall").hide();
+      $(".article-content-container").removeClass(
+        "floating-paywall-article-container"
+      );
+      $("#email-paywall").show();
+    }
+  }
+
+  $("#paywall-container").show();
+}
+
+function usePaywallTool(countryCode, paywall, source, ad_id, locale='default') {
+  countryCode = get_country_code_or_row_group(countryCode);
+  has_article_view_been_logged = true;
+  
+  return fetch(window.paywall_tool_bucket + countryCode + '.json')
+    .then(response => response.json())
+    .then(data => {
+      //sort paywalls by priority and subscriber_score_floor
+      let allPaywalls = data
+      .sort((a, b) => b['subscriber_score_floor'] - a['subscriber_score_floor']) // reverse sort
+      .sort((a, b) => a['priority_level'] - b['priority_level']);
+      let paywallMatches = false;
+      let waitingForCompass = false;
+      for (var paywallNum = 0; paywallNum < allPaywalls.length; paywallNum++) {
+        let selectedPaywall = allPaywalls[paywallNum];
+        paywallMatches = sourceMatches(source, selectedPaywall['source'], selectedPaywall['source_strings']) &&
+                         teamIdsMatch(selectedPaywall['team_ids']) &&
+                         leagueIdsMatch(selectedPaywall['league_ids']) &&
+                         articleIdsMatch(selectedPaywall['article_ids']) &&
+                         subscriberScoresMatch(selectedPaywall['subscriber_score_floor']);
+
+        if (paywallMatches) {
+          if (selectedPaywall['experiment_name'] != null) {
+            waitingForCompass= true;
+            compassClient.getTreatmentForExperiment(selectedPaywall['experiment_name']).then(treatment => {
+              compassClient.logExposure(selectedPaywall['experiment_name'], treatment);
+              setPaywallStrings(selectedPaywall, paywall, locale, treatment);
+              renderPaywall(paywall, false, false, locale);
+              waitingForCompass= false;
+
+            });
+          } else {
+            setPaywallStrings(selectedPaywall, paywall, locale, 'CTRL');
+          }
+
+          // Determine if we have a propensity paywall
+          if (selectedPaywall['source_strings']) {
+            // If the flag is off we don't want to show the propensity paywalls
+            if (!window.propensity_paywall) {
+              continue;
+            }
+            if (Cookies.get('propensity_paywall_treatment')) {
+              // NOTE: Skip experiment check in local storage; get config have completed in time for this log exposure
+              compassClient.logExposure('Propensity Paywall Experiment', Cookies.get('propensity_paywall_treatment'), true);
+              is_propensity_paywall = true;
+            }
+          } else {
+            is_propensity_paywall = false;
+          }
+
+          log_article_view(ad_id, paywall);
+
+          break; //paywall has been found
+        }
+      }
+      // if no paywall matched, use non geo specific paywall
+      if (!paywallMatches) {
+        setNonGeoSpecificPaywallStrings(paywall);
+      }
+      if(!waitingForCompass){
+        renderPaywall(paywall, false, false, locale);
+      }
+    })
+  .catch((error) => {
+    console.log(error);
+    // if errored, use non geo specific paywall
+    setNonGeoSpecificPaywallStrings(paywall);
+
+    renderPaywall(paywall, false, false, locale);
+  });
+}
+
+function getScrollDepthForScrollLock() {
+  return $("#the_post").offset().top + (0.85 * parseInt($("#the_post").css("height"))) - window.innerHeight;
+}
+
+function setPaywallStrings(paywallToolData, paywall, locale, treatment) {
+  paywall["paywall_template"] = paywallToolData["paywall_template"];
+
+  var paywallStrings = paywallToolData["experiment_info"][treatment];
+
+  paywall["subheader"] = paywallStrings["subheader"][locale];
+  paywall["header"] = paywallStrings["header"][locale];
+  paywall["body"] = paywallStrings["body"][locale];
+  paywall["button_text"] = paywallStrings["button_text"][locale];
+  paywall["href"] = paywallStrings["href"][locale];
+}
+
+function setNonGeoSpecificPaywallStrings(paywall) {
+  paywall["subheader"] = 'LIMITED TIME OFFER';
+  paywall["header"] = 'Access all of The Athletic.';
+  paywall["body"] = 'Get every sports story that matters. Only $3.99/month.';
+  paywall["button_text"] = 'Subscribe';
+  paywall["href"] = '/checkout2/intro1/hfintro6?';
+}
+
+if (typeof exports !== 'undefined') {
+  module.exports = {
+    usePaywallTool,
+    setPaywallStrings,
+    sourceMatches,
+    teamIdsMatch,
+    leagueIdsMatch,
+    articleIdsMatch,
+    renderPaywall,
+    setNonGeoSpecificPaywallStrings
+  };
+}

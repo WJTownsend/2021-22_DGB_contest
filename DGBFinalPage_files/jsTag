@@ -1,0 +1,337 @@
+'use strict';
+var ADTERRORHANDLER = ADTERRORHANDLER || (function () {
+    return {
+        trackUrl: 'https://log.adtraction.fail/error',
+        captureError: function (ex) {
+            try {
+                var errorData = {
+                    version: "7",
+                    source: "jsTag",
+                    ap: ADT && ADT.Tag ? ADT.Tag.ap : null,
+                    guid: ADT && ADT.Tag ? ADT.Tag.guid : null,
+                    name: ex.name, // e.g. ReferenceError
+                    message: ex.line, // e.g. x is undefined
+                    url: window.location.href,
+                    stack: ex.stack // stacktrace string; remember, different per-browser!
+                };
+                var trackUrl = ADTERRORHANDLER.trackUrl;
+                if (trackUrl && trackUrl.length > 0) {
+                    if (!navigator.sendBeacon) {
+                        //ajax
+                        if (window.XMLHttpRequest) {
+                            var request = new XMLHttpRequest();
+                            request.open('POST', trackUrl, true);
+                            request.setRequestHeader("Content-Type", "application/json");
+                            request.onreadystatechange = function () { // Call a function when the state changes.
+                                if (this.readyState === XMLHttpRequest.DONE && this.status === 200) {
+                                    // Request finished. Do processing here.
+                                }
+                            };
+                            request.onerror = function () {
+                                // There was a connection error of some sort
+                            };
+                            request.send(JSON.stringify(errorData));
+                        }
+                    } else {
+                        //beacon
+                        var status = navigator.sendBeacon(trackUrl, JSON.stringify(errorData));
+                    }
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        },
+
+        oldOnError: window.onerror,
+
+        onError: function (eventOrMessage, url, lineNo, columnNo, error) {
+            try {
+                if (ADTERRORHANDLER.oldOnError) ADTERRORHANDLER.oldOnError(eventOrMessage, url, lineNo, columnNo, error);	// Call any previously assigned handler
+                if (typeof eventOrMessage !== 'string') {
+                    error = eventOrMessage.error;
+                    url = eventOrMessage.filename || eventOrMessage.fileName;
+                    lineNo = eventOrMessage.lineno || eventOrMessage.lineNumber;
+                    columnNo = eventOrMessage.colno || eventOrMessage.columnNumber;
+                    eventOrMessage = eventOrMessage.message || eventOrMessage.name || error.message || error.name;
+                }
+
+                if (url && url.includes("jsTag")) {
+                    if (error) {
+                        ADTERRORHANDLER.captureError(error);
+                    } else {
+                        ADTERRORHANDLER.captureError(new Error([eventOrMessage, ' Occurred in jsTag:', lineNo || '?', ':', columnNo || '?'].join('')));
+                    }
+                }
+                return false;
+            } catch (e) {
+                console.error(e);
+            }
+        }
+    }
+}());
+window.onerror = ADTERRORHANDLER.onError;
+
+try{
+
+var ADT = ADT || {};
+ADT.Tag = ADT.Tag || {};
+ADT.Tag.guidCookieName = "at_gd";
+
+ADT.Tag.ap = parseInt("1586086140");
+ADT.Tag.eventHost = "https://cnv.adt603.net";
+ADT.Tag.tk = 1;
+ADT.Tag.trt = 4;
+ADT.Tag.programDomainsStr = '["www.theathletic.com"]';
+ADT.Tag.programDomains = JSON.parse(ADT.Tag.programDomainsStr.substring(0, 1) === "[" ? ADT.Tag.programDomainsStr : "[]");
+ADT.Tag.ptnUrl = 'https://valuesportal.com';
+ADT.Tag.ptnForce = 'null';
+ADT.Tag.ptnAdvertiserId = 'null';
+ADT.Tag.ptnLang = 'null';
+
+ADT.Tag.getQueryParameter = function (name) {
+    try {
+    var url = window.location.href;
+    name = name.replace(/[\[\]]/g, '\\$&');
+    var regex = new RegExp('[?&]' + name + '(=([^&#]*)|&|#|$)');
+    var results = regex.exec(url);
+    if (!results) return null;
+    if (!results[2]) return '';
+    return decodeURIComponent(results[2].replace(/\+/g, ' '));
+    } catch (e) {
+        ADTERRORHANDLER.captureError(e);
+    }
+};
+
+ADT.Tag.setCookie = function (name, value) {
+    try {
+    var today = new Date();
+    var maxDate = new Date(today.getTime() + (365 * 1000 * 60 * 60 * 24));
+    document.cookie = name + "=" + value + "; expires=" + maxDate.toGMTString() + "; path=/;domain=" + ADT.Tag.cookieDomain;
+    } catch (e) {
+        ADTERRORHANDLER.captureError(e);
+    }
+};
+
+ADT.Tag.getCookie = function getCookie(cname) {
+    try {
+    var name = cname + "=";
+    var decodedCookie = document.cookie;
+    var ca = decodedCookie.split(';');
+    for (var i = 0; i < ca.length; i++) {
+        var c = ca[i];
+        while (c.charAt(0) == ' ') {
+            c = c.substring(1);
+        }
+        if (c.indexOf(name) == 0) {
+            return c.substring(name.length, c.length);
+        }
+    }
+    return "";
+    } catch (e) {
+        ADTERRORHANDLER.captureError(e);
+    }
+};
+
+ADT.Tag.getURLParameter = function () {
+    try {
+    var href = document.location.href;
+    var queryUrl = null;
+    if (href.indexOf("adt_url=") > -1) {
+        queryUrl = href.substr(href.indexOf("adt_url=") + 8);
+        var redirectURL;
+        try {
+            redirectURL = new URL(queryUrl);
+            if (ADT.Tag.programDomains.includes(redirectURL.hostname)) {
+                return queryUrl;
+            }
+        } catch (e) {
+            ADTERRORHANDLER.captureError(e);
+            return null;
+        }
+    }
+    return null;
+    } catch (e) {
+        ADTERRORHANDLER.captureError(e);
+    }
+};
+
+ADT.Tag.getCookieValue = function (cname) {
+    try {
+    var name = cname + "=";
+    var decodedCookie = document.cookie;
+    var ca = decodedCookie.split(';');
+    for (var i = 0; i < ca.length; i++) {
+        var c = ca[i];
+        while (c.charAt(0) == ' ') {
+            c = c.substring(1);
+        }
+        if (c.indexOf(name) == 0) {
+            return c.substring(name.length, c.length);
+        }
+    }
+    return null;
+    } catch (e) {
+        ADTERRORHANDLER.captureError(e);
+    }
+};
+
+ADT.Tag.getCN = function () {
+    try {
+    var decodedCookie = document.cookie;
+    var ca = decodedCookie.split(';');
+    for (var i = 0; i < ca.length; i++) {
+        var c = ca[i];
+        while (c.charAt(0) == ' ') {
+            c = c.substring(1);
+        }
+        if (c.indexOf("at.") == 0) {
+            return c.substring(0, c.indexOf("="));
+        }
+    }
+    return null;
+    } catch (e) {
+        ADTERRORHANDLER.captureError(e);
+    }
+};
+
+ADT.Tag.doEvent = function (t, am, c, ti, tp, cpn, xd, pc) {
+    try {
+    ADT.Tag.t = typeof ADT.Tag.t === "undefined" ? 3 : ADT.Tag.t;
+    ADT.Tag.c = typeof ADT.Tag.c === "undefined" ? "SEK" : ADT.Tag.c;
+    t = typeof t === "undefined" ? ADT.Tag.t : t;
+    am = typeof am === "undefined" ? ADT.Tag.am : am;
+    c = typeof c === "undefined" ? ADT.Tag.c : c;
+    ti = typeof ti === "undefined" ? ADT.Tag.ti : ti;
+    tp = typeof tp === "undefined" ? ADT.Tag.tp : tp;
+    cpn = typeof cpn === "undefined" ? ADT.Tag.cpn : cpn;
+    if (cpn && cpn.length > 0) {
+        cpn = encodeURIComponent(cpn);
+    }
+    xd = typeof xd === "undefined" ? ADT.Tag.xd : xd;
+    pc = typeof pc === "undefined" ? ADT.Tag.pc : pc;
+
+    var saleQuery = "t=" + t + "&tk=" + ADT.Tag.tk + "&am=" + am + "&c=" + c + "&ti=" + ti + "&tp=" + tp + "&trt=" + ADT.Tag.trt + "&cpn=" + cpn + "&ap=" + ADT.Tag.ap + "&xd=" + xd + "&tt=1";
+    var salePath = "/t/t";
+    // check for at_gd cookie
+    var guid = ADT.Tag.getCookieValue("at_gd");
+    if (guid != null) {
+        saleQuery += "&at_gd=" + guid;
+    }
+    var cn = ADT.Tag.getCN();
+    if (cn != null) {
+        var cv = ADT.Tag.getCookieValue(cn);
+        saleQuery += "&cn=" + cn + "&cv=" + cv;
+    }
+    if (pc && pc.length > 0) {
+        pc = encodeURIComponent(pc);
+        saleQuery += "&pc=" + pc;
+    }
+
+    // webKit workaround for inApp browsers. See: https://bugs.webkit.org/show_bug.cgi?id=193508
+    var userAgent = window.navigator.userAgent.toLowerCase(),
+        downgrade = /samsungbrowser|crios|edge|gsa|instagram|fban|fbios/.test(userAgent);
+
+    if (!navigator.sendBeacon || downgrade) {
+        var imgEl = document.createElement("img");
+        imgEl.src = ADT.Tag.eventHost + salePath + "?" + saleQuery;
+        imgEl.width = 1;
+        imgEl.height = 1;
+        imgEl.style.cssText = "display:none";
+        document.body.appendChild(imgEl);
+        console.log("Triggered event: " + ADT.Tag.eventHost + salePath + "?" + saleQuery + " using image element.");
+    } else {
+        navigator.sendBeacon(ADT.Tag.eventHost + salePath + "?" + saleQuery);
+        console.log("Triggered event: " + ADT.Tag.eventHost + salePath + "?" + saleQuery + " using beacon.");
+    }
+    console.log(ADT.Tag.eventHost + salePath + "?" + saleQuery);
+    } catch (e) {
+        ADTERRORHANDLER.captureError(e);
+    }
+
+    try {
+        ADT.Tag.loadPTN();
+    } catch (error) {
+        ADTERRORHANDLER.captureError(error);
+        console.log('loadPTN() error', error);
+    }
+};
+
+    ADT.Tag.loadPTN = function () {
+      try {
+        var ptn = function () {
+          try {
+            var divId = "adtraction-plus";
+
+            if (ADT.Tag.ptnForce === "true" || document.getElementById(divId)) {
+              var script = document.createElement("script");
+              script.type = "text/javascript";
+
+              var ptnUrl = ADT.Tag.ptnUrl;
+              script.src =
+                ptnUrl + (ptnUrl.substring(ptnUrl.length - 1, ptnUrl.length) === "/" ? "" : "/") + "widget/widget.js";
+
+              script.async = true;
+              script.defer = true;
+
+              script.onreadystatechange = function () {
+                // console.log('jstag script.onreadystatechange');
+              };
+              script.onload = function () {
+                // console.log('jstag script.onload');
+              };
+
+              document.head.appendChild(script); // could change 'head' to 'body' to add it to the end of the body section instead
+            }
+          } catch (e) {
+            ADTERRORHANDLER.captureError(e);
+          }
+        };
+
+        if (document.readyState !== "loading") {
+          ptn();
+        } else {
+          document.addEventListener("DOMContentLoaded", function (event) {
+            ptn();
+          });
+        }
+      } catch (e) {
+        ADTERRORHANDLER.captureError(e);
+      }
+    };
+
+ADT.Tag.main = function () {
+    try {
+    //polyfill
+    ADT.Tag.polyfill();
+
+    ADT.Tag.cookieDomain = window.location.hostname.substr(0, 4) == "www." ? window.location.hostname.substr(3) : window.location.hostname;
+    ADT.Tag.cv = ADT.Tag.getQueryParameter("cv");
+    ADT.Tag.guid = ADT.Tag.getQueryParameter("at_gd");
+
+    if (ADT.Tag.cv != null) {
+        ADT.Tag.setCookie(ADT.Tag.guidCookieName, ADT.Tag.cv);
+    }
+    if (ADT.Tag.guid != null) {
+        ADT.Tag.setCookie(ADT.Tag.guidCookieName, ADT.Tag.guid);
+    }
+    // do redirect if url parameter is present
+    if (ADT.Tag.getURLParameter() != null) {
+        window.location.href = ADT.Tag.getURLParameter();
+    }
+
+    if (typeof ADT.Tag.tp !== "undefined") {
+        ADT.Tag.doEvent();
+    }
+    } catch (e) {
+        ADTERRORHANDLER.captureError(e);
+    }
+};
+
+ADT.Tag.polyfill = function () {
+    function rewriteURL(){window.URL=function(t,e){var n,r,i,o,s,h,c,u;function a(t,e,n){return"@"===n?"":n}if(Object.defineProperty(this,"hash",{get:function(){return n},set:function(t){return n=t.length>0?"#"+t.match(/^#*(.*)/)[1]:"",t}}),Object.defineProperty(this,"host",{get:function(){return s.length>0?r+":"+s:r},set:function(t){var e=t.split(":");return this.hostname=e[0],this.port=e[1],t}}),Object.defineProperty(this,"hostname",{get:function(){return r},set:function(t){return r=t.length>0?encodeURIComponent(t):r,t}}),Object.defineProperty(this,"href",{get:function(){var t=h+"//";return(u.length>0||i.length>0)&&(u.length>0&&(t+=u),i.length>0&&(t+=":"+i),t+="@"),t+=r,s.length>0&&(t+=":"+s),t+(o+c+n)},set:function(t){this.protocol=t;var e=(t=t.replace(/.*?:\/*/,"")).match(/([^:]*).*@/);this.username=e?e[1]:"";var n=(t=t.replace(/([^:]*):?(.*@)/,a)).match(/.*(?=@)/);this.password=n?n[0]:"",t=t.replace(/.*@/,""),this.hostname=t.match(/[^:\/?]*/);var r=t.match(/:(\d+)/);this.port=r?r[1]:"";var i=t.match(/\/([^?#]*)/);this.pathname=i?i[1]:"";var o=t.match(/\?[^#]*/);this.search=o?o[0]:"";var s=t.match(/\#.*/);this.hash=s?s[0]:""}}),Object.defineProperty(this,"origin",{get:function(){var t=h+"//"+r;return s.length>0&&(t+=":"+s),t},set:function(t){this.protocol=t,t=t.replace(/.*?:\/*/,""),this.hostname=t.match(/[^:\/?]*/);var e=t.match(/:(\d+)/);this.port=e?e[1]:""}}),Object.defineProperty(this,"password",{get:function(){return i},set:function(t){return i=encodeURIComponent(t),t}}),Object.defineProperty(this,"pathname",{get:function(){return o},set:function(t){return o="/"+t.match(/\/?(.*)/)[1],t}}),Object.defineProperty(this,"port",{get:function(){return s},set:function(t){return s=isNaN(t)||""===t?"":Math.min(65535,t).toString(),t}}),Object.defineProperty(this,"protocol",{get:function(){return h},set:function(t){return h=t.match(/[^\/:]*/)[0]+":",t}}),Object.defineProperty(this,"search",{get:function(){return c},set:function(t){return c=t.length>0?"?"+t.match(/\??(.*)/)[1]:"",t}}),Object.defineProperty(this,"username",{get:function(){return u},set:function(t){u=t}}),"string"==typeof t){var f=/^[a-zA-z]+:\/\/.*/.test(t),p=/^[a-zA-z]+:\/\/.*/.test(e);if(f)this.href=t;else{if(!p)throw new TypeError('URL string is not valid. If using a relative url, a second argument needs to be passed representing the base URL. Example: new URL("relative/path", "http://www.example.com");');this.href=e+t}}else n=t.hash,r=t.hostname,i=t.password?t.password:"",o=t.pathname,s=t.port,h=t.protocol,c=t.search,u=t.username?t.username:"";this.searchParams=function(t){var e=[],n=[];function r(){0===e.length?t.search="":t.search=e.map(function(t,e){return t+"="+n[e]}).join("&")}return t.search.length>0&&t.search.slice(1).split("&").forEach(function(t){var r=t.split("=");e.push(r[0]),n.push(r[1])}),{append:function(t,i){e.push(t),n.push(i),r()},delete:function(t){for(;e.indexOf(t)>-1;)n.splice(e.indexOf(t),1),e.splice(e.indexOf(t),1);r()},entries:function(){return e.map(function(t,e){return[t,n[e]]})},get:function(t){return n[e.indexOf(t)]},getAll:function(t){return n.filter(function(n,r){return e[r]===t})},has:function(t){return e.indexOf(t)>-1},keys:function(){return e},set:function(t,i){if(-1===e.indexOf(t))this.append(t,i);else{var o=!0,s=[];e=e.filter(function(e,r){return e!==t?(s.push(n[r]),!0):!!o&&(o=!1,s.push(i),!0)}),n=s,r()}},sort:function(){var t=this.entries().sort();e=[],n=[],t.forEach(function(t){e.push(t[0]),n.push(t[1])}),r()},toString:function(){return t.search.slice(1)},values:function(){return n}}}(this)}}window.NodeList&&!NodeList.prototype.forEach&&(NodeList.prototype.forEach=Array.prototype.forEach),String.prototype.includes||(String.prototype.includes=function(t,e){"use strict";if(t instanceof RegExp)throw TypeError("first argument must not be a RegExp");return void 0===e&&(e=0),-1!==this.indexOf(t,e)}),String.prototype.startsWith||Object.defineProperty(String.prototype,"startsWith",{value:function(t,e){var n=e>0?0|e:0;return this.substring(n,n+t.length)===t}}),"function"!=typeof URL?rewriteURL():"searchParams"in new URL(window.location)||rewriteURL(),String.prototype.endsWith||(String.prototype.endsWith=function(t,e){return(void 0===e||e>this.length)&&(e=this.length),this.substring(e-t.length,e)===t});
+}
+
+ADT.Tag.main();
+} catch (e) {
+    ADTERRORHANDLER.captureError(e);
+}

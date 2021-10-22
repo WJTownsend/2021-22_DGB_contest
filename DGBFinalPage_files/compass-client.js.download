@@ -1,0 +1,404 @@
+class CompassClient {
+  constructor() {
+    this.CACHE_LIMIT_IN_MS = 6 * 3600 * 1000; // 6 hours
+    this.DEFAULT_TREATMENT = "CTRL";
+
+    this.compassDb = null;
+    this.loadingTimestamp = null;
+
+    if (ENV === "staging" || ENV === "development") {
+      this.compass_url = "https://api-staging.theathletic.com/compass";
+    } else {
+      this.compass_url = "https://api.theathletic.com/compass";
+    }
+
+    this.storageKey = this._getStorageKey();
+
+    var testStorageDb = localStorage.getItem(this.storageKey);
+    var lastLoadedTimestamp = localStorage.getItem(
+      this.storageKey + "-lastLoadedTimestamp"
+    );
+    var loadFromRemote = false;
+
+    var userId = this._getUserIdOrNull();
+    var sessionId = this._getSessionIdOrNull();
+
+    if (sessionId == null) {
+      // no sessionid - we shouldn't attempt to load anything
+      return;
+    }
+
+    // instance and tags for emitting Datadog stats
+    var instance = this;
+
+    var userAgent = navigator.userAgent;
+    var stat_tags = {
+      env: ENV,
+      stack: "jQuery",
+    };
+    var cloudwatch_tags = $.extend({}, stat_tags);
+    cloudwatch_tags["session_id"] = sessionId;
+    cloudwatch_tags["user_agent"] = userAgent;
+
+    // #1 - see if we can load the experiment blob from LocalStorage, and it's within CACHE_LIMIT_IN_MS
+    if (testStorageDb) {
+      try {
+        this.compassDb = JSON.parse(testStorageDb);
+        if (
+          this.compassDb &&
+          this.compassDb.timestamp &&
+          lastLoadedTimestamp > Date.now() - this.CACHE_LIMIT_IN_MS
+        ) {
+          instance._emit_stat_incr("compass.config.loadfromcache", stat_tags);
+
+          cloudwatch_tags["compass_event"] = "compass.config.loadfromcache";
+          instance._cloudwatch_log(cloudwatch_tags);
+          return;
+        } else {
+          // else: no database, or too old - fall through to load from remote
+          loadFromRemote = true;
+        }
+      } catch (e) {
+        localStorage.setItem(this.storageKey, null);
+        loadFromRemote = true;
+      }
+    } else {
+      loadFromRemote = true;
+    }
+
+    // #2 - local storage failed (either doesn't exist, corrupt, or out of cache) - load from remote
+    if (loadFromRemote) {
+      var configParams = new URLSearchParams();
+
+      var lastChangeDate = this.compassDb && this.compassDb.timestamp
+      ? new Date(this.compassDb.timestamp).toISOString().split(".")[0] + "Z"
+      : new Date(1970, 0, 1).toISOString().split(".")[0] + "Z";
+
+      configParams.set('explorer_type', 'web');
+      configParams.set('type', 'other');
+      configParams.set('locale', navigator.language);
+      configParams.set('bundle_identifier', navigator.userAgent);
+      configParams.set('identifier', sessionId);
+      configParams.set(
+        'last_change_date',
+        lastChangeDate
+      );
+
+      if (userId !== null) {
+        configParams.set('user_identifier', userId);
+      }
+
+      this.loadingTimestamp = Date.now();
+
+      stat_tags["compass_url"] = this.compass_url;
+      stat_tags["api_version"] =  "v3";
+      instance._emit_stat_incr("compass.config.request", stat_tags);
+
+
+      cloudwatch_tags["compass_url"] = this.compass_url;
+      cloudwatch_tags["api_version"] =  "v3";
+      cloudwatch_tags["last_change_date"] = lastChangeDate;
+      cloudwatch_tags["compass_event"] = "compass.config.request";
+      instance._cloudwatch_log(cloudwatch_tags);
+
+      $.ajax({
+        url: this.compass_url + "/v3/config?" + configParams.toString(),
+        type: "GET",
+        timeout: 3000,
+        success: function (data, status, xhr) {
+          stat_tags["status"] = xhr.status;
+          instance._emit_stat_incr("compass.config.success", stat_tags);
+
+          cloudwatch_tags["status"] = xhr.status;
+          cloudwatch_tags["compass_event"] = "compass.config.success";
+          instance._cloudwatch_log(cloudwatch_tags);
+    
+          if (xhr.status === 304) {
+            instance.loadingTimestamp = null;
+            localStorage.setItem(
+              instance.storageKey + "-lastLoadedTimestamp",
+              Date.now()
+            );
+            return;
+          }
+
+          instance.compassDb = data;
+          instance.loadingTimestamp = null;
+          localStorage.setItem(instance.storageKey, JSON.stringify(data));
+          localStorage.setItem(
+            instance.storageKey + "-lastLoadedTimestamp",
+            Date.now()
+          );
+        },
+        error: function (xhr) {
+          stat_tags["status"] = xhr.status;
+          instance._emit_stat_incr("compass.config.failure", stat_tags);
+          instance.loadingTimestamp = null;
+
+          cloudwatch_tags["status"] = xhr.status;
+          cloudwatch_tags["compass_event"] = "compass.config.failure";
+          instance._cloudwatch_log(cloudwatch_tags);
+        },
+      });
+    }
+  }
+
+  /**
+   * For a given experiment ID, return the treatment they should be in
+   * @param {!experimentId} string
+   * @returns {Promise} Promise will return the treatment the user is in as a string
+   */
+  getTreatmentForExperiment(experimentId) {
+    var url = new URL(window.location.href);
+    var experiment_override = url.searchParams.get("compass-experiment");
+    var treatment_override = url.searchParams.get("compass-treatment");
+    // Returns a promise, as we might be loading from remote
+    var instance = this;
+    if(experiment_override && treatment_override && (experiment_override===experimentId)){
+      return new Promise(function (resolve, reject) {
+        // return value passed by param
+        resolve(treatment_override);
+      });
+
+    }else if (this.compassDb === null && this.loadingTimestamp) {
+
+      // still loading from remote
+      return new Promise(function (resolve, reject) {
+        (function waitForDb() {
+          if (instance.compassDb)
+            return resolve(
+              instance._getTreatmentForExperimentSync(experimentId)
+            );
+          setTimeout(waitForDb.bind(null, instance), 30);
+        })();
+      });
+    } else if (this.compassDb) {
+      // already loaded
+      return new Promise(function (resolve, reject) {
+        return resolve(instance._getTreatmentForExperimentSync(experimentId));
+      });
+    } else {
+      return new Promise(function (resolve, reject) {
+        // something has gone wrong
+        return resolve(instance.DEFAULT_TREATMENT);
+      });
+    }
+  }
+
+  _getExperimentFromId(experimentId) {
+    var return_exp = null;
+    if (this.compassDb && this.compassDb.experiments) {
+      this.compassDb.experiments.forEach((experiment) => {
+        if (experiment.id === experimentId) {
+          return_exp = experiment;
+        }
+      });
+    }
+
+    return return_exp;
+  }
+
+  _getTreatmentForExperimentSync(experimentId) {
+    var variant = this.DEFAULT_TREATMENT;
+    var experiment = this._getExperimentFromId(experimentId);
+    if (experiment !== null) {
+      variant = experiment.variant;
+    }
+    return variant;
+  }
+
+  _getUserIdOrNull() {
+    var userId = window.customer_id;
+    if (
+      typeof userId === "undefined" ||
+      userId === null ||
+      (typeof userId === "string" && userId === "undefined")
+    ) {
+      return null;
+    }
+
+    if (typeof userId === "number" && userId > 0) {
+      return userId;
+    }
+
+    if (typeof userId === "string") {
+      var userIdInt;
+      try {
+        userIdInt = parseInt(userId);
+      } catch (e) {
+        return null;
+      }
+      return userIdInt;
+    }
+
+    return null;
+  }
+
+  _getSessionIdOrNull() {
+    var sessionId = Cookies.get("ath_anonymous_user_id");
+    if (typeof sessionId === "undefined" || sessionId === null) {
+      return null;
+    }
+    return sessionId;
+  }
+
+  _getStorageKey() {
+    var userId = this._getUserIdOrNull();
+    var sessionId = this._getSessionIdOrNull();
+
+    if (userId !== null) {
+      return "compass-user-" + userId + "-" + sessionId;
+    } else if (sessionId !== null) {
+      return "compass-session-" + sessionId;
+    }
+  }
+
+  /**
+   * For a given experiment ID and variant ID, log an exposure event to Compass.
+   * Will not log if Compass database doesn't exist locally or if the experiment isn't
+   * in the cache, as this implies the user got the fallback CTRL.
+   * @param {!experimentId} string
+   * @param {!variantId} string
+   * @param {skipExperimentCheck} boolean Skip check for experiment in compassDb
+   */
+  logExposure(experimentId, variantId, skipExperimentCheck = false) {
+    if (skipExperimentCheck || (this.compassDb && this._getExperimentFromId(experimentId))) {
+      var url = this.compass_url + "/v1/exposed";
+
+      var data = {
+        identity: {},
+        experimentId: experimentId,
+        variantId: variantId,
+      };
+
+      var userId = this._getUserIdOrNull();
+      var sessionId = this._getSessionIdOrNull();
+
+
+      if (userId !== null) {
+        data.identity.userId = userId;
+      }
+
+      if (sessionId !== null) {
+        data.identity.deviceId = sessionId.toString();
+      }
+
+      var instance = this;
+
+      var userAgent = navigator.userAgent;
+      var stat_tags = {
+        compass_url: this.compass_url,
+        env: ENV,
+        stack: "jQuery",
+        api_version: "v1",
+        experiment_id: experimentId,
+        variant_id: variantId,
+      };
+      var cloudwatch_tags = $.extend({}, stat_tags);
+      cloudwatch_tags["session_id"] = sessionId;
+      cloudwatch_tags["user_agent"] = userAgent;
+
+
+      instance._emit_stat_incr("compass.exposed.request", stat_tags);
+
+      cloudwatch_tags["compass_event"] = "compass.exposed.request";
+      instance._cloudwatch_log(cloudwatch_tags);
+
+      $.ajax({
+        url: url,
+        type: "POST",
+        dataType: "json",
+        contentType: "application/json",
+        data: JSON.stringify(data),
+        success: function (data, status, xhr) {
+          stat_tags["status"] = xhr.status;
+          instance._emit_stat_incr("compass.exposed.success", stat_tags);
+
+          cloudwatch_tags["status"] = xhr.status;
+          cloudwatch_tags["compass_event"] = "compass.exposed.success";
+          instance._cloudwatch_log(cloudwatch_tags);
+        },
+        error: function (xhr) {
+          stat_tags["status"] = xhr.status;
+          instance._emit_stat_incr("compass.exposed.failure", stat_tags);
+
+          cloudwatch_tags["status"] = xhr.status;
+          cloudwatch_tags["compass_event"] = "compass.exposed.failure";
+          instance._cloudwatch_log(cloudwatch_tags);
+        },
+      });
+    } else {
+      var userAgent = navigator.userAgent;
+      var sessionId = this._getSessionIdOrNull();
+      var instance = this;
+      var stat_tags = {
+        compass_url: this.compass_url,
+        env: ENV,
+        stack: "jQuery",
+        api_version: "v1",
+        experiment_id: experimentId,
+        variant_id: variantId,
+        compass_db: this.compassDb ? true : false
+      };
+
+      var cloudwatch_tags = $.extend({}, stat_tags);
+      cloudwatch_tags["session_id"] = sessionId;
+      cloudwatch_tags["user_agent"] = userAgent;
+      cloudwatch_tags["experiment_list"] = this.compassDb && this.compassDb.experiments;
+      cloudwatch_tags["experiment_match"] = this._getExperimentFromId(experimentId);
+      cloudwatch_tags["skip_experiment_check"] = skipExperimentCheck;
+
+      instance._emit_stat_incr("compass.exposurequery.failure", stat_tags);
+
+      cloudwatch_tags["compass_event"] = "compass.exposurequery.failure";
+      instance._cloudwatch_log(cloudwatch_tags);
+    }
+  }
+
+  /**
+   * For a given experiment ID, return the treatment they should be in
+   * @param {!experimentId} string
+   * @param {!dataKey} string Key representing the data element you want
+   * @returns {string} Returns the value associated with the key
+   */
+  getData(experimentId, dataKey) {
+    var returnValue = null;
+    if (this.compassDb) {
+      var experiment = this._getExperimentFromId(experimentId);
+      if (experiment !== null) {
+        if (!experiment.data) {
+          return null;
+        }
+        experiment.data.forEach((dataItem) => {
+          if (dataItem.key === dataKey) {
+            returnValue = dataItem.value;
+          }
+        });
+      }
+    }
+    return returnValue;
+  }
+
+  _emit_stat_incr(key, stat_tags) {
+    $.ajax({
+      type: "POST",
+      url: "/web-api",
+      data: {
+        action: "emit-stat-incr",
+        key: key,
+        tags: stat_tags
+      }
+    });
+  }
+
+  _cloudwatch_log(cloudwatch_tags) {
+    $.ajax({
+      type: "POST",
+      url: "/web-api",
+      data: {
+        action: "cloudwatch-log",
+        tags: cloudwatch_tags
+      }
+    });
+  }
+}

@@ -1,0 +1,291 @@
+/*!
+ * JavaScript Cookie v2.2.0
+ * https://github.com/js-cookie/js-cookie
+ *
+ * Copyright 2006, 2015 Klaus Hartl & Fagner Brack
+ * Released under the MIT license
+ */
+
+var cookieTypes = {
+  ANALYTICAL: "analytical",
+  ESSENTIAL: "essential",
+};
+
+var cookieTypesMap = {
+  league_ids: cookieTypes.ANALYTICAL,
+  all_tagged_teams: cookieTypes.ANALYTICAL,
+  ath_anonymous_user_id: cookieTypes.ESSENTIAL,
+  ath_last_article_seen_on: cookieTypes.ANALYTICAL,
+  ath_last_checkoutPage_view: cookieTypes.ANALYTICAL,
+  ath_orig_referrer_domain: cookieTypes.ANALYTICAL,
+  ath_referrer_user_id: cookieTypes.ANALYTICAL,
+  attribution_survey_eligible: cookieTypes.ANALYTICAL,
+  campaign: cookieTypes.ANALYTICAL,
+  "cookie-policy-accept": cookieTypes.ESSENTIAL,
+  "cookie-policy-optout": cookieTypes.ESSENTIAL,
+  experiment_id: cookieTypes.ESSENTIAL,
+  first_visit: cookieTypes.ESSENTIAL,
+  google_analytics: cookieTypes.ANALYTICAL,
+  Kochava: cookieTypes.ANALYTICAL,
+  last_ad_id_clicked: cookieTypes.ANALYTICAL,
+  last_ad_id_clicktime: cookieTypes.ANALYTICAL,
+  last_article_id: cookieTypes.ANALYTICAL,
+  last_podcast_episode_id: cookieTypes.ESSENTIAL,
+  offer_deal_fatigue_paywall: cookieTypes.ANALYTICAL,
+  pc: cookieTypes.ESSENTIAL,
+  personalization_id: cookieTypes.ESSENTIAL,
+  podcast_speed_rate: cookieTypes.ESSENTIAL,
+  propensity_paywall_treatment: cookieTypes.ANALYTICAL,
+  ref: cookieTypes.ESSENTIAL,
+  regwall_animation_articles_viewed: cookieTypes.ANALYTICAL,
+  Session_ID: cookieTypes.ESSENTIAL,
+  should_see_offer_independent_paywall: cookieTypes.ANALYTICAL,
+  source_orig: cookieTypes.ANALYTICAL,
+  source: cookieTypes.ANALYTICAL,
+  sticky_discount: cookieTypes.ESSENTIAL,
+  sticky_pc: cookieTypes.ESSENTIAL,
+  sticky_promo: cookieTypes.ESSENTIAL,
+  sticky_trial: cookieTypes.ESSENTIAL,
+  Taboola: cookieTypes.ANALYTICAL,
+  timezone_name: cookieTypes.ESSENTIAL,
+  variant_id: cookieTypes.ESSENTIAL,
+  login_source: cookieTypes.ANALYTICAL,
+  ta_first_paywalled: cookieTypes.ESSENTIAL,
+  post_regwall_articles_seen: cookieTypes.ESSENTIAL,
+  reg_wall_views: cookieTypes.ANALYTICAL
+};
+
+(function (factory) {
+  var registeredInModuleLoader = false;
+  if (typeof define === "function" && define.amd) {
+    define(factory);
+    registeredInModuleLoader = true;
+  }
+  if (typeof exports === "object") {
+    module.exports = factory();
+    registeredInModuleLoader = true;
+  }
+  if (!registeredInModuleLoader) {
+    var OldCookies = window.Cookies;
+    var api = (window.Cookies = factory());
+    api.noConflict = function () {
+      window.Cookies = OldCookies;
+      return api;
+    };
+  }
+})(function () {
+  function extend() {
+    var i = 0;
+    var result = {};
+    for (; i < arguments.length; i++) {
+      var attributes = arguments[i];
+      for (var key in attributes) {
+        result[key] = attributes[key];
+      }
+    }
+    return result;
+  }
+
+  function init(converter) {
+    function api(key, value, attributes) {
+      var result;
+      if (typeof document === "undefined") {
+        return;
+      }
+
+      // Write
+
+      if (arguments.length > 1) {
+        attributes = extend(
+          {
+            path: "/",
+          },
+          api.defaults,
+          attributes
+        );
+
+        var expires_in_days = attributes.expires; // comes in days
+        if (typeof expires_in_days !== "number") {
+          throw (
+            "Error: expires must be a number (got " +
+            expires_in_days +
+            ", for cookie " +
+            key +
+            ")"
+          );
+        }
+
+        // convert to date string for fallback document.cookie expiration date
+        var expires = new Date();
+        expires.setMilliseconds(
+          expires.getMilliseconds() + attributes.expires * 864e5
+        );
+        attributes.expires = expires;
+
+        try {
+          result = JSON.stringify(value);
+          if (/^[\{\[]/.test(result)) {
+            value = result;
+          }
+        } catch (e) {}
+
+        if (!converter.write) {
+          value = encodeURIComponent(String(value)).replace(
+            /%(23|24|26|2B|3A|3C|3E|3D|2F|3F|40|5B|5D|5E|60|7B|7D|7C)/g,
+            decodeURIComponent
+          );
+        } else {
+          value = converter.write(value, key);
+        }
+
+        key = encodeURIComponent(String(key));
+        key = key.replace(/%(23|24|26|2B|5E|60|7C)/g, decodeURIComponent);
+        key = key.replace(/[\(\)]/g, escape);
+
+        var stringifiedAttributes = "";
+
+        for (var attributeName in attributes) {
+          if (!attributes[attributeName]) {
+            continue;
+          }
+          stringifiedAttributes += "; " + attributeName;
+          if (attributes[attributeName] === true) {
+            continue;
+          }
+          stringifiedAttributes += "=" + attributes[attributeName];
+        }
+
+        // Set the cookie client side to prevent the async nature of setting cookies via AJAX causing issues
+        document.cookie = key + "=" + value + stringifiedAttributes;
+
+        // Safari and Brave limit cookies set by JS to a max age of 7 days;
+        // this code posts to an endpoint so we can set cookies on the server-side, which bumps the limits to
+        // 6 months (Brave) and 20 years (Safari)
+        $.ajax({
+          type: "POST",
+          url: "/web-api",
+          data: {
+            action: "set-cookie",
+            cookie_name: key,
+            cookie_value: value,
+            expires: expires_in_days,
+          },
+          error: function (error) {
+            // if it fails, continue to set on the client side
+            document.cookie = key + "=" + value + stringifiedAttributes;
+          },
+        });
+      }
+
+      // Read
+
+      if (!key) {
+        result = {};
+      }
+
+      // To prevent the for loop in the first place assign an empty array
+      // in case there are no cookies at all. Also prevents odd result when
+      // calling "get()"
+      var cookies = document.cookie ? document.cookie.split("; ") : [];
+      var rdecode = /(%[0-9A-Z]{2})+/g;
+      var i = 0;
+
+      for (; i < cookies.length; i++) {
+        var parts = cookies[i].split("=");
+        var cookie = parts.slice(1).join("=");
+
+        if (!this.json && cookie.charAt(0) === '"') {
+          cookie = cookie.slice(1, -1);
+        }
+
+        try {
+          var name = parts[0].replace(rdecode, decodeURIComponent);
+          cookie = converter.read
+            ? converter.read(cookie, name)
+            : converter(cookie, name) ||
+              cookie.replace(rdecode, decodeURIComponent);
+
+          if (this.json) {
+            try {
+              cookie = JSON.parse(cookie);
+            } catch (e) {}
+          }
+
+          if (key === name) {
+            result = cookie;
+            break;
+          }
+
+          if (!key) {
+            result[name] = cookie;
+          }
+        } catch (e) {}
+      }
+
+      return result;
+    }
+
+    api.set = function (key, value, attributes) {
+      var cookieType = cookieTypesMap[key];
+      if (cookieType == null) {
+        // bug engineers that this needs to be labeled
+        if (location.hostname === "localhost") {
+          document.write(
+            "You must add your cookie, " + key + ". Instructions in wiki."
+          );
+        }
+        api(key, value, attributes);
+      } else if (
+        ![cookieTypes.ESSENTIAL, cookieTypes.ANALYTICAL].includes(cookieType)
+      ) {
+        // bug engineers that they made a type that doesn't work. Good chance it was a typo.
+        if (location.hostname === "localhost") {
+          document.write(
+            "You must have your cookie type for " +
+              key +
+              " be essential or analytical. Check your spelling!"
+          );
+        }
+        api(key, value, attributes);
+      } else {
+        var optOuts = api.get("cookie-policy-optout");
+
+        if (optOuts == null) {
+          optOuts = "";
+        }
+
+        if (!optOuts.includes(cookieType)) {
+          api(key, value, attributes);
+        }
+      }
+    };
+    api.get = function (key) {
+      return api.call(api, key);
+    };
+    api.getJSON = function () {
+      return api.apply(
+        {
+          json: true,
+        },
+        [].slice.call(arguments)
+      );
+    };
+    api.defaults = {};
+
+    api.remove = function (key, attributes) {
+      api(
+        key,
+        "",
+        extend(attributes, {
+          expires: -1,
+        })
+      );
+    };
+
+    api.withConverter = init;
+
+    return api;
+  }
+
+  return init(function () {});
+});

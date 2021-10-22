@@ -1,0 +1,241 @@
+$('table.sortable th').click(function() {
+  var table = $(this).parents('table').eq(0);
+  var rows = table.find('tr:gt(0)').toArray().sort(tableSortComparer($(this).index()));
+  var down_arrow = '&#9660';
+  var up_arrow = '&#9650';
+  var place_holder = "&nbsp;&nbsp;"
+  table.prop('asc', !table.prop('asc'));
+  if (!table.prop('asc')){rows = rows.reverse();}
+  for (var i = 0; i < rows.length; i++){table.append(rows[i]);}
+
+  if($(".in-article").length) {
+    if(!table.prop('asc')) {
+      $(this).parents('thead').find('.sort-arrow').html(place_holder);
+      $(this).find('.sort-arrow').html(down_arrow);
+      table_freeze();
+    } else {
+      $(this).parents('thead').find('.sort-arrow').html(place_holder);
+      $(this).find('.sort-arrow').html(up_arrow);;
+      table_freeze();
+    }
+
+    if(typeof track_analytics !== 'undefined') {
+      track_analytics('table-tool-user-sort', "article_id", window.article_id);
+    }
+  }
+});
+function tableSortComparer(index) {
+  return function(a, b) {
+    var valA = getTableCellValue(a, index), valB = getTableCellValue(b, index);
+    if($(a).parents('table').eq(0).hasClass('in-article') && first_value(valHasSymbol(valA)) && first_value(valHasSymbol(valB))) {
+      return (Number(first_value(valHasSymbol(valA))) - Number(first_value(valHasSymbol(valB))));
+    } else {
+      return $.isNumeric(valA) && $.isNumeric(valB) ? valA - valB : valA.toString().localeCompare(valB);
+    }
+  }
+}
+function getTableCellValue(row, index){ return $(row).children('td').eq(index).data('sortBy') || $(row).children('td').eq(index).text(); }
+
+function valHasSymbol(x) {
+  return x.match(/(\d{0,4}(\.\d{1,4})?)/g);
+}
+function first_value(arr) {
+  for(var i=0; i<arr.length; i++) {
+    if(arr[i] && arr[i] !== "") return arr[i];
+  }
+}
+
+if($(".in-article").length) {
+  $(window).on('resize', table_freeze);
+
+  $(window).on('load', function() {
+    if(window.article_id) {
+      track_analytics('table-tool-user-view', "article_id", window.article_id);
+    }
+  });
+  table_freeze();
+}
+
+// Every time this function is called, it checks through all of the tables with a class of 
+// .in-article. If it finds one, it will either freeze the first or second column if a table is 
+// larger than the window (creating overflow). It will make the decision of one/two columns depending
+// on what kind of table it is (denoted with .freeze-col-sel-2). The reason we have to do all of this
+// is in order to freeze table columns, they have to be absolutely positioned and pulled out of the normal flow of the dom. So 
+// we have to figure out a bunch of things with javascript that would normally be handled via 
+// an html table. Like column width/height/placement/etc.
+function table_freeze() {
+  var rank_headers = ["rank", "rnk", "rk", "order"];
+  var tables = $(".tab-content"),
+      table_ids = [];
+  for(var i=0; i<tables.length; i++) {
+    var t = tables[i];
+    table_ids.push(t.id);
+  }
+
+  for(var i=0; i<table_ids.length; i++) {
+    var min_table_width;
+    var id = "#"+table_ids[i];
+    var article_width = $(id+".tab-content").first().width();
+    var table_width = $(id+".tab-content").find("table").width();
+    var two_column = $(id+".tab-content .freeze-col-sel-2").length !== 0;
+    var current_table = document.getElementById(table_ids[i]);
+    if(table_width > article_width && !$(id).hasClass("frozen")) {
+      $(id+' table.in-article th:first-child').addClass('zindex1 relative freeze-col width-auto-imp-sm height-auto-imp-sm left-0-imp-sm');
+      $(id+' table.in-article td:first-child').addClass('relative freeze-col width-auto-imp-sm height-auto-imp-sm left-0-imp-sm');
+
+      if(two_column) {
+        $(id+' table.in-article td:first-child').addClass('border-right-none-imp');
+        $(id+' table.in-article th:first-child').addClass('border-right-none-imp');
+        $(id+' table.in-article th:nth-child(2)').addClass('zindex1 relative freeze-col-2 width-auto-imp-sm height-auto-imp-sm left-0-imp-sm');
+        $(id+' table.in-article td:nth-child(2)').addClass('relative-imp freeze-col-2 width-auto-imp-sm height-auto-imp-sm left-0-imp-sm');
+      }
+
+      $(id+' .table-responsive').addClass('freeze-col-window margin-left-auto-imp-sm width-auto-imp-sm border-transparent-imp');
+
+      var max_width = 0;
+      var element;
+      var margin_offset = 15;
+      var ranked = false;
+      $(id+" .freeze-col").each(function(){
+         element = $(this);
+         var span_width = $(this).find("span").width();
+         if($(this).is("th")) {
+          var txt = $(this).text();
+          if(rank_headers.indexOf(txt.toLowerCase()) !== -1) {
+            span_width = $(this).width();
+          }
+         }
+         if(span_width > max_width){
+           max_width = span_width;
+         }
+         if($(this).is("td") && !$(this).hasClass("ia-hlt")) {
+           margin_offset = -30;
+         } else if ($(this).hasClass("ia-hlt") && $(this).hasClass("basic")) {
+           margin_offset = -30;
+         } else if ($(this).hasClass("ia-hlt") && ($(this).hasClass("team") || $(this).hasClass("player"))) {
+           margin_offset = -30;
+         }
+
+         if($(this).hasClass("width-50px")) {
+           ranked = true;
+         }
+      });
+
+      var ranked_col_2 = false;
+      if(two_column) {
+        var max_width_col_2 = 0;
+        var element_col_2;
+        var margin_offset_col_2 = 15;
+        $(id+" .freeze-col-2").each(function(){
+           element_col_2 = $(this);
+           var span_width = $(this).find("span").width();
+           if($(this).is("th")) {
+            var txt = $(this).text();
+            if(rank_headers.indexOf(txt.toLowerCase()) !== -1) {
+              span_width = $(this).width();
+            }
+           }
+           if(span_width > max_width_col_2){
+             max_width_col_2 = span_width;
+           }
+           if($(this).is("td") && !$(this).hasClass("ia-hlt")) {
+             margin_offset_col_2 = -30;
+           } else if ($(this).hasClass("ia-hlt") && $(this).hasClass("basic")) {
+             margin_offset_col_2 = -30;
+           } else if ($(this).hasClass("ia-hlt") && ($(this).hasClass("team") || $(this).hasClass("player"))) {
+             margin_offset_col_2 = -30;
+           }
+        });
+        if($(this).hasClass("width-50px")) {
+          ranked_col_2 = true;
+        }
+      }
+
+      margin_offset_col_2 = ranked_col_2 ? -10 : margin_offset_col_2;
+
+      var all = current_table.getElementsByClassName('freeze-col');
+      for (var j = 0; j < all.length; j++) {
+        all[j].style.width = (max_width-margin_offset)+"px";
+      }
+
+      if(two_column) {
+        var all = current_table.getElementsByClassName('freeze-col-2');
+        for (var j = 0; j < all.length; j++) {
+          all[j].style.width = (max_width_col_2-margin_offset_col_2)+"px";
+          all[j].style.left = (max_width-margin_offset)+"px";
+        }
+      }
+
+      var all = current_table.getElementsByClassName('freeze-col-window');
+      for (var j = 0; j < all.length; j++) {
+        if(two_column) {
+          all[j].style.marginLeft = (max_width+max_width_col_2-margin_offset-margin_offset_col_2-2)+"px";
+        } else {
+          all[j].style.marginLeft = (max_width-margin_offset-2)+"px";
+        }
+      }
+      $(id).addClass("frozen");
+      min_table_width = table_width;
+    }
+
+    if(article_width > min_table_width && $(id).hasClass("frozen")) {
+      var all = current_table.getElementsByClassName('freeze-col');
+      for (var j = 0; j < all.length; j++) {
+        all[j].style.width = null;
+      }
+
+      if(two_column) {
+        var all = current_table.getElementsByClassName('freeze-col-2');
+        for (var j = 0; j < all.length; j++) {
+          all[j].style.width = null;
+          all[j].style.left = null;
+        }
+      }
+
+      var all = current_table.getElementsByClassName('freeze-col-window');
+      for (var j = 0; j < all.length; j++) {
+        all[j].style.marginLeft = null;
+        all[j].style.width = null;
+      }
+
+      $(id+' table.in-article th:first-child').removeClass('freeze-col zindex1');
+      $(id+' table.in-article td:first-child').removeClass('freeze-col');
+      if(two_column) {
+        $(id+' table.in-article td:first-child').removeClass('border-right-none-imp');
+        $(id+' table.in-article th:first-child').removeClass('border-right-none-imp');
+        $(id+' table.in-article th:nth-child(2)').removeClass('freeze-col-2 zindex1');
+        $(id+' table.in-article td:nth-child(2)').removeClass('freeze-col-2');
+      }
+      $(id+' .table-responsive').removeClass('freeze-col-window');
+      $(id).removeClass("frozen");
+    }
+
+    var all = current_table.getElementsByClassName('freeze-col-window');
+    for (var j = 0; j < all.length; j++) {
+      var table_freeze_margin = parseInt(all[j].style.marginLeft);
+      all[j].style.width = (article_width-table_freeze_margin)+"px";
+    }
+
+    var all = current_table.getElementsByClassName('freeze-col-2');
+    for (var j = 0; j < all.length; j++) {
+      var next_sibling_height = $(all[j]).next('td').outerHeight();
+      if(!next_sibling_height) {
+        next_sibling_height = $(all[j]).next('th').outerHeight();
+        next_sibling_height++; // There is a weird margin that isn't accounted for with outerheight
+      }
+      all[j].style.height = next_sibling_height+"px";
+    }
+
+    var all = current_table.getElementsByClassName('freeze-col');
+    for (var j = 0; j < all.length; j++) {
+      var next_sibling_height = $(all[j]).next('td').outerHeight();
+      if(!next_sibling_height) {
+        next_sibling_height = $(all[j]).next('th').outerHeight();
+        if(!two_column) {
+          next_sibling_height++;
+        }
+      }
+      all[j].style.height = next_sibling_height+"px";
+    }
+  }
+}
