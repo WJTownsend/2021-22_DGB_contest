@@ -20,6 +20,8 @@ This repository hosts the following:
     - Generate a .csv file of the entire cleaned and standardized dataframe
 - A slideshow summary, containing the reports generated for each question as well as my own notes regarding fun or interesting things that I noticed in the process of handling each question
 - A nicely formatted spreadsheet of the entire contest and all entries
+- The README.md that you're reading right now
+- The GNU GPL v3.0 license
 
 ## HOW DID YOU HANDLE VAGUE OR UNCLEAR ANSWERS?
 
