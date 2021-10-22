@@ -30,3 +30,13 @@ Everything was handled in an as permissive and kind a manner as I could, as I wa
 I still need to generate an autograder script, which should be fairly simple to do. This will require some collaboration to determine what constitutes an ineligible answer (won't count as wrong, but won't count as right) and what constitutes a wrong answer. While I don't expect anyone to be reading this before I get this done, on the off chance that anyone is - please don't bother building this and providing it to me. At this point, I've done all of this myself and I'd like to finish it off myself as well. 
 
 That said, I'm all for improvements to my existing script. Feel free to reach out via [Twitter at @HasekBowsToMe](https://twitter.com/hasekbowstome) if you have a question about your entry, or email at TownsendSignUp on Gmail if you have more broad questions or concerns. 
+
+## ACKNOWLEDGEMENTS
+
+Obviously the biggest thanks has to go to [Sean McIndoe](https://twitter.com/DownGoesBrown) for creating the contest. I was really tired of working on my schoolwork, and this was a nice little diversion for about two weeks. This was a fun little learning experience, even if I probably put way more time into it than I should have. 
+
+[BeautifulSoup's Documentation Page](https://www.crummy.com/software/BeautifulSoup/bs4/doc/), which I got to know quite a bit better than I had in the course of figuring out how to scrape a huuuuuuuge page for the data I needed.
+
+[StackOverflow](https://stackoverflow.com/questions/5041008/how-to-find-elements-by-class) for helping me use "class_" where outdated documentation for BeautifulSoup reflected using "class".
+
+[StackOverflow](https://stackoverflow.com/questions/21997587/beautifulsoup-get-text-from-find-all) for helping me get the data out of my find_all.
