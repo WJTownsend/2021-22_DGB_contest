@@ -18,8 +18,8 @@ This repository hosts the following:
     - Applies standardization operations to each question through the use of several voluminous dictionaries
     - Generate basic reporting and value_counts for each question
     - Generate a .csv file of the entire cleaned and standardized dataframe
-- The slideshow summary provided to Sean, containing the reports generated for each question as well as my own notes regarding fun or interesting things that I noticed in the process of handling each question
-- A nicely formatted spreadsheet of the entire contest entry
+- A slideshow summary, containing the reports generated for each question as well as my own notes regarding fun or interesting things that I noticed in the process of handling each question
+- A nicely formatted spreadsheet of the entire contest and all entries
 
 ## HOW DID YOU HANDLE VAGUE OR UNCLEAR ANSWERS?
 
